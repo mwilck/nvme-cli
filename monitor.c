@@ -17,14 +17,24 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <errno.h>
 #include <libudev.h>
 #include <signal.h>
+#include <sys/epoll.h>
 
 #include "nvme-status.h"
 #include "monitor.h"
 
 static struct udev *udev;
+
+static void close_ptr(int *p)
+{
+	if (*p != -1) {
+		close(*p);
+		*p = -1;
+	}
+}
 
 static void cleanup_monitor(struct udev_monitor **pmon)
 {
@@ -87,6 +97,70 @@ static int monitor_init_signals(void)
 	return 0;
 }
 
+static void monitor_handle_udevice(struct udev_device *ud)
+{
+	fprintf(stderr, "uevent: %s %s\n",
+		udev_device_get_action(ud),
+		udev_device_get_sysname(ud));
+}
+
+static void monitor_handle_uevents(struct udev_monitor *monitor)
+{
+	struct udev_device *ud;
+
+	for (ud = udev_monitor_receive_device(monitor);
+	     ud;
+	     ud = udev_monitor_receive_device(monitor)) {
+		monitor_handle_udevice(ud);
+		udev_device_unref(ud);
+	}
+}
+
+#define MAX_EVENTS 1
+static int monitor_main_loop(struct udev_monitor *monitor)
+{
+	int ep_fd __attribute__((cleanup(close_ptr))) = -1;
+	int ret;
+	struct epoll_event ep_ev = { .events = EPOLLIN, };
+	struct epoll_event events[MAX_EVENTS];
+	sigset_t ep_mask;
+
+	ep_fd = epoll_create1(0);
+	if (ep_fd == -1)
+		return -errno;
+	ep_ev.data.ptr = monitor;
+	ret = epoll_ctl(ep_fd, EPOLL_CTL_ADD,
+			udev_monitor_get_fd(monitor), &ep_ev);
+	if (ret == -1)
+		return -errno;
+
+	sigfillset(&ep_mask);
+	sigdelset(&ep_mask, SIGTERM);
+	sigdelset(&ep_mask, SIGINT);
+	while (1) {
+		int rc, i;
+
+		rc = epoll_pwait(ep_fd, events, MAX_EVENTS, -1, &ep_mask);
+		if (rc == -1 && errno == EINTR) {
+			fprintf(stderr, "monitor: exit signal received\n");
+			return 0;
+		} else if (rc == -1) {
+			fprintf(stderr, "monitor: epoll_wait: %m\n");
+			return -errno;
+		} else if (rc == 0 || rc > MAX_EVENTS) {
+			fprintf(stderr, "monitor: epoll_wait: unexpected rc=%d\n", rc);
+			continue;
+		}
+		for (i = 0; i < MAX_EVENTS; i++) {
+			if (events[i].data.ptr == monitor)
+				(void)monitor_handle_uevents(monitor);
+			else
+				fprintf(stderr, "monitor: unexpected event\n");
+		}
+	}
+	return ret;
+}
+
 int aen_monitor(const char *desc, int argc, char **argv)
 {
 	int ret;
@@ -98,8 +172,10 @@ int aen_monitor(const char *desc, int argc, char **argv)
 		goto out;
 	}
 	ret = create_udev_monitor(&monitor);
-	if (ret == 0)
+	if (ret == 0) {
+		ret = monitor_main_loop(monitor);
 		udev_monitor_unref(monitor);
+	}
 	udev = udev_unref(udev);
 out:
 	return nvme_status_to_errno(ret, true);
