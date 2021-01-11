@@ -15,14 +15,58 @@
  * This file implements a simple monitor for NVMe-related uevents.
  */
 
+#include <stddef.h>
 #include <errno.h>
+#include <libudev.h>
 
 #include "nvme-status.h"
 #include "monitor.h"
 
-int aen_monitor(const char *desc, int argc, char **argv)
+static struct udev *udev;
+
+static void cleanup_monitor(struct udev_monitor **pmon)
 {
-	/* Handle as unimplemented for now */
-	return nvme_status_to_errno(-ENOTTY, true);
+	if (*pmon) {
+		udev_monitor_unref(*pmon);
+		*pmon = NULL;
+	}
 }
 
+static int create_udev_monitor(struct udev_monitor **pmon)
+{
+	struct udev_monitor *mon __attribute((cleanup(cleanup_monitor))) = NULL;
+	int ret;
+
+	if (!udev) {
+		udev = udev_new();
+		if (!udev)
+			return -ENOMEM;
+	}
+	mon = udev_monitor_new_from_netlink(udev, "kernel");
+	if (!mon)
+		return errno ? -errno : -ENOMEM;
+
+	/*
+	 * This fails in unpriviliged mode. Use the same value as udevd.
+	 * We may able to decrease this buffer size later.
+	 */
+	(void)udev_monitor_set_receive_buffer_size(mon, 128*1024*1024);
+	ret = udev_monitor_enable_receiving(mon);
+	if (ret < 0)
+		return ret;
+	*pmon = mon;
+	mon = NULL;
+	return 0;
+}
+
+int aen_monitor(const char *desc, int argc, char **argv)
+{
+	int ret;
+	struct udev_monitor *monitor;
+
+	ret = create_udev_monitor(&monitor);
+	if (ret == 0)
+		udev_monitor_unref(monitor);
+	udev = udev_unref(udev);
+	return nvme_status_to_errno(ret, true);
+}
