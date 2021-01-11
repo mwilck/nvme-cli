@@ -16,8 +16,10 @@
  */
 
 #include <stddef.h>
+#include <stdio.h>
 #include <errno.h>
 #include <libudev.h>
+#include <signal.h>
 
 #include "nvme-status.h"
 #include "monitor.h"
@@ -59,14 +61,46 @@ static int create_udev_monitor(struct udev_monitor **pmon)
 	return 0;
 }
 
+static sig_atomic_t must_exit;
+
+static void monitor_int_handler(int sig)
+{
+	must_exit = 1;
+}
+
+static int monitor_init_signals(void)
+{
+	sigset_t mask;
+	struct sigaction sa = { .sa_handler = monitor_int_handler, };
+
+	/*
+	 * Block all signals. They will be unblocked when we wait
+	 * for events.
+	 */
+	sigfillset(&mask);
+	if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
+		return -errno;
+	if (sigaction(SIGTERM, &sa, NULL) == -1)
+		return -errno;
+	if (sigaction(SIGINT, &sa, NULL) == -1)
+		return -errno;
+	return 0;
+}
+
 int aen_monitor(const char *desc, int argc, char **argv)
 {
 	int ret;
 	struct udev_monitor *monitor;
 
+	ret = monitor_init_signals();
+	if (ret != 0) {
+		fprintf(stderr, "monitor: failed to initialize signals: %m\n");
+		goto out;
+	}
 	ret = create_udev_monitor(&monitor);
 	if (ret == 0)
 		udev_monitor_unref(monitor);
 	udev = udev_unref(udev);
+out:
 	return nvme_status_to_errno(ret, true);
 }
