@@ -58,6 +58,10 @@ static int create_udev_monitor(struct udev_monitor **pmon)
 	if (!mon)
 		return errno ? -errno : -ENOMEM;
 
+	/* Add match for NVMe controller devices */
+	ret = udev_monitor_filter_add_match_subsystem_devtype(mon, "nvme", NULL);
+	/* Add match for fc_udev_device */
+	ret = udev_monitor_filter_add_match_subsystem_devtype(mon, "fc", NULL);
 	/*
 	 * This fails in unpriviliged mode. Use the same value as udevd.
 	 * We may able to decrease this buffer size later.
