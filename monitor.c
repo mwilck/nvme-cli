@@ -21,10 +21,15 @@
 #include <errno.h>
 #include <libudev.h>
 #include <signal.h>
+#include <time.h>
+#include <syslog.h>
 #include <sys/epoll.h>
 
 #include "nvme-status.h"
+#include "util/argconfig.h"
 #include "monitor.h"
+#define LOG_FUNCNAME 1
+#include "log.h"
 
 static struct udev *udev;
 
@@ -103,7 +108,7 @@ static int monitor_init_signals(void)
 
 static void monitor_handle_udevice(struct udev_device *ud)
 {
-	fprintf(stderr, "uevent: %s %s\n",
+	log(LOG_INFO, "uevent: %s %s\n",
 		udev_device_get_action(ud),
 		udev_device_get_sysname(ud));
 }
@@ -146,22 +151,49 @@ static int monitor_main_loop(struct udev_monitor *monitor)
 
 		rc = epoll_pwait(ep_fd, events, MAX_EVENTS, -1, &ep_mask);
 		if (rc == -1 && errno == EINTR) {
-			fprintf(stderr, "monitor: exit signal received\n");
+			log(LOG_NOTICE, "monitor: exit signal received\n");
 			return 0;
 		} else if (rc == -1) {
-			fprintf(stderr, "monitor: epoll_wait: %m\n");
+			log(LOG_ERR, "monitor: epoll_wait: %m\n");
 			return -errno;
 		} else if (rc == 0 || rc > MAX_EVENTS) {
-			fprintf(stderr, "monitor: epoll_wait: unexpected rc=%d\n", rc);
+			log(LOG_ERR, "monitor: epoll_wait: unexpected rc=%d\n", rc);
 			continue;
 		}
 		for (i = 0; i < MAX_EVENTS; i++) {
 			if (events[i].data.ptr == monitor)
 				(void)monitor_handle_uevents(monitor);
 			else
-				fprintf(stderr, "monitor: unexpected event\n");
+				log(LOG_ERR, "monitor: unexpected event\n");
 		}
 	}
+	return ret;
+}
+
+static int monitor_parse_opts(const char *desc, int argc, char **argv)
+{
+	bool quiet = false;
+	bool verbose = false;
+	bool debug = false;
+	int ret;
+	OPT_ARGS(opts) = {
+		OPT_FLAG("silent",         'S', &quiet,               "log level: silent"),
+		OPT_FLAG("verbose",        'v', &verbose,             "log level: verbose"),
+		OPT_FLAG("debug",          'D', &debug,               "log level: debug"),
+		OPT_FLAG("clockstamps",    'C', &log_timestamp,       "print log timestamps"),
+		OPT_END()
+	};
+
+	ret = argconfig_parse(argc, argv, desc, opts);
+	if (ret)
+		return ret;
+	if (quiet)
+		log_level = LOG_WARNING;
+	if (verbose)
+		log_level = LOG_INFO;
+	if (debug)
+		log_level = LOG_DEBUG;
+
 	return ret;
 }
 
@@ -170,9 +202,12 @@ int aen_monitor(const char *desc, int argc, char **argv)
 	int ret;
 	struct udev_monitor *monitor;
 
+	ret = monitor_parse_opts(desc, argc, argv);
+	if (ret)
+		goto out;
 	ret = monitor_init_signals();
 	if (ret != 0) {
-		fprintf(stderr, "monitor: failed to initialize signals: %m\n");
+		log(LOG_ERR, "monitor: failed to initialize signals: %m\n");
 		goto out;
 	}
 	ret = create_udev_monitor(&monitor);
