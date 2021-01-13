@@ -31,6 +31,10 @@
 #define LOG_FUNCNAME 1
 #include "log.h"
 
+static struct monitor_config {
+	bool autoconnect;
+} mon_cfg;
+
 static struct udev *udev;
 
 static void close_ptr(int *p)
@@ -177,6 +181,7 @@ static int monitor_parse_opts(const char *desc, int argc, char **argv)
 	bool debug = false;
 	int ret;
 	OPT_ARGS(opts) = {
+		OPT_FLAG("autoconnect",    'A', &mon_cfg.autoconnect, "automatically connect newly discovered controllers"),
 		OPT_FLAG("silent",         'S', &quiet,               "log level: silent"),
 		OPT_FLAG("verbose",        'v', &verbose,             "log level: verbose"),
 		OPT_FLAG("debug",          'D', &debug,               "log level: debug"),
