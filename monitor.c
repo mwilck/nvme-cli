@@ -17,14 +17,18 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <libudev.h>
 #include <signal.h>
 #include <time.h>
+#include <limits.h>
 #include <syslog.h>
+#include <sys/stat.h>
 #include <sys/epoll.h>
 
+#include "common.h"
 #include "nvme-status.h"
 #include "util/argconfig.h"
 #include "monitor.h"
@@ -33,6 +37,7 @@
 
 static struct monitor_config {
 	bool autoconnect;
+	bool skip_udev_on_exit;
 } mon_cfg;
 
 static struct udev *udev;
@@ -44,6 +49,8 @@ static void close_ptr(int *p)
 		*p = -1;
 	}
 }
+
+CLEANUP_FUNC(char)
 
 static void cleanup_monitor(struct udev_monitor **pmon)
 {
@@ -174,12 +181,64 @@ static int monitor_main_loop(struct udev_monitor *monitor)
 	return ret;
 }
 
+static const char autoconnect_rules[] = "/run/udev/rules.d/70-nvmf-autoconnect.rules";
+
+static int monitor_disable_udev_rules(void)
+{
+	CLEANUP(char, path) = strdup(autoconnect_rules);
+	char *s1, *s2;
+	int rc;
+
+	if (!path)
+		return -ENOMEM;
+
+	s2 = strrchr(path, '/');
+	for (s1 = s2 - 1; s1 > path && *s1 != '/'; s1--);
+
+	*s2 = *s1 = '\0';
+	rc = mkdir(path, 0755);
+	if (rc == 0 || errno == EEXIST) {
+		*s1 = '/';
+		rc = mkdir(path, 0755);
+		if (rc == 0 || errno == EEXIST) {
+			*s2 = '/';
+			rc = symlink("/dev/null", path);
+		}
+	}
+	if (rc) {
+		if (errno == EEXIST) {
+			char target[PATH_MAX];
+
+			if (readlink(path, target, sizeof(target)) != -1 &&
+			    !strcmp(target, "/dev/null")) {
+				log(LOG_INFO,
+				    "symlink %s -> /dev/null exists already\n",
+				    autoconnect_rules);
+				return 1;
+			}
+		}
+		log(LOG_ERR, "error creating %s: %m\n", autoconnect_rules);
+	} else
+		log(LOG_INFO, "created %s\n", autoconnect_rules);
+
+	return rc ? (errno ? -errno : -EIO) : 0;
+}
+
+static void monitor_enable_udev_rules(void)
+{
+	if (unlink(autoconnect_rules) == -1 && errno != ENOENT)
+		log(LOG_ERR, "error removing %s: %m\n", autoconnect_rules);
+	else
+		log(LOG_INFO, "removed %s\n", autoconnect_rules);
+}
+
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
 {
 	bool quiet = false;
 	bool verbose = false;
 	bool debug = false;
-	int ret;
+	int ret = 0;
+
 	OPT_ARGS(opts) = {
 		OPT_FLAG("autoconnect",    'A', &mon_cfg.autoconnect, "automatically connect newly discovered controllers"),
 		OPT_FLAG("silent",         'S', &quiet,               "log level: silent"),
@@ -198,7 +257,17 @@ static int monitor_parse_opts(const char *desc, int argc, char **argv)
 		log_level = LOG_INFO;
 	if (debug)
 		log_level = LOG_DEBUG;
-
+	if (mon_cfg.autoconnect) {
+		ret = monitor_disable_udev_rules();
+		if (ret < 0) {
+			mon_cfg.autoconnect = false;
+			log(LOG_WARNING, "autoconnect disabled\n");
+			ret = 0;
+		} else if (ret > 0) {
+			mon_cfg.skip_udev_on_exit = true;
+			ret = 0;
+		}
+	}
 	return ret;
 }
 
@@ -221,6 +290,8 @@ int aen_monitor(const char *desc, int argc, char **argv)
 		udev_monitor_unref(monitor);
 	}
 	udev = udev_unref(udev);
+	if (mon_cfg.autoconnect && !mon_cfg.skip_udev_on_exit)
+		monitor_enable_udev_rules();
 out:
 	return nvme_status_to_errno(ret, true);
 }
