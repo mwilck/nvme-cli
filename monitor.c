@@ -214,6 +214,74 @@ static void monitor_handle_fc_uev(struct udev_device *ud)
 	monitor_discovery("fc", traddr, NULL, host_traddr);
 }
 
+static int monitor_get_nvme_uev_props(struct udev_device *ud,
+				      char *transport, size_t tr_sz,
+				      char *traddr, size_t tra_sz,
+				      char *trsvcid, size_t trs_sz,
+				      char *host_traddr, size_t htra_sz)
+{
+	const char *sysname = udev_device_get_sysname(ud);
+	bool aen_disc = false;
+	struct udev_list_entry *entry;
+
+	entry = udev_device_get_properties_list_entry(ud);
+	if (!entry) {
+		log(LOG_NOTICE, "%s: emtpy properties list\n", sysname);
+		return -ENOENT;
+	}
+
+	*transport = *traddr = *trsvcid = *host_traddr = '\0';
+	for (; entry; entry = udev_list_entry_get_next(entry)) {
+		const char *name = udev_list_entry_get_name(entry);
+
+		if (!strcmp(name, "NVME_AEN") &&
+		    !strcmp(udev_list_entry_get_value(entry), "0x70f002"))
+				aen_disc = true;
+		else if (!strcmp(name, "NVME_TRTYPE"))
+			memccpy(transport, udev_list_entry_get_value(entry),
+				'\0', tr_sz);
+		else if (!strcmp(name, "NVME_TRADDR"))
+			memccpy(traddr, udev_list_entry_get_value(entry),
+				'\0', htra_sz);
+		else if (!strcmp(name, "NVME_TRSVCID"))
+			memccpy(trsvcid, udev_list_entry_get_value(entry),
+				'\0', trs_sz);
+		else if (!strcmp(name, "NVME_HOST_TRADDR"))
+			memccpy(host_traddr, udev_list_entry_get_value(entry),
+				'\0', tra_sz);
+	}
+	if (!aen_disc) {
+		log(LOG_DEBUG, "%s: not a \"discovery log changed\" AEN, ignoring event\n",
+		    sysname);
+		return -EINVAL;
+	}
+
+	if (!*traddr || !*transport) {
+		log(LOG_WARNING, "%s: transport properties missing\n", sysname);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static void monitor_handle_nvme_uev(struct udev_device *ud)
+{
+	char traddr[NVMF_TRADDR_SIZE], host_traddr[NVMF_TRADDR_SIZE];
+	char trsvcid[NVMF_TRSVCID_SIZE], transport[5];
+
+	if (strcmp(udev_device_get_action(ud), "change"))
+		return;
+
+	if (monitor_get_nvme_uev_props(ud, transport, sizeof(transport),
+				       traddr, sizeof(traddr),
+				       trsvcid, sizeof(trsvcid),
+				       host_traddr, sizeof(host_traddr)))
+		return;
+
+	monitor_discovery(transport, traddr,
+			  strcmp(trsvcid, "none") ? trsvcid : NULL, host_traddr);
+}
+
 static void monitor_handle_udevice(struct udev_device *ud)
 {
 	const char *subsys  = udev_device_get_subsystem(ud);
@@ -226,6 +294,8 @@ static void monitor_handle_udevice(struct udev_device *ud)
 	}
 	if (!strcmp(subsys, "fc"))
 		monitor_handle_fc_uev(ud);
+	else if (!strcmp(subsys, "nvme"))
+		monitor_handle_nvme_uev(ud);
 }
 
 static void monitor_handle_uevents(struct udev_monitor *monitor)
