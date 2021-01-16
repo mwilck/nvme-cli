@@ -68,31 +68,7 @@ const char *conarg_traddr = "traddr";
 const char *conarg_trsvcid = "trsvcid";
 const char *conarg_host_traddr = "host_traddr";
 
-static struct config {
-	char *nqn;
-	char *transport;
-	char *traddr;
-	char *trsvcid;
-	char *host_traddr;
-	char *hostnqn;
-	char *hostid;
-	int  nr_io_queues;
-	int  nr_write_queues;
-	int  nr_poll_queues;
-	int  queue_size;
-	int  keep_alive_tmo;
-	int  reconnect_delay;
-	int  ctrl_loss_tmo;
-	int  tos;
-	char *raw;
-	char *device;
-	int  duplicate_connect;
-	int  disable_sqflow;
-	int  hdr_digest;
-	int  data_digest;
-	bool persistent;
-	bool matching_only;
-} cfg = { .ctrl_loss_tmo = NVMF_DEF_CTRL_LOSS_TMO };
+struct config cfg = { .ctrl_loss_tmo = NVMF_DEF_CTRL_LOSS_TMO };
 
 struct connect_args {
 	char *subsysnqn;
@@ -106,7 +82,6 @@ struct connect_args {
 
 struct connect_args *tracked_ctrls;
 
-#define BUF_SIZE		4096
 #define PATH_NVME_FABRICS	"/dev/nvme-fabrics"
 #define PATH_NVMF_DISC		"/etc/nvme/discovery.conf"
 #define PATH_NVMF_HOSTNQN	"/etc/nvme/hostnqn"
@@ -225,7 +200,7 @@ static const char *cms_str(__u8 cm)
 	return arg_str(cms, ARRAY_SIZE(cms), cm);
 }
 
-static int do_discover(char *argstr, bool connect);
+int do_discover(char *argstr, bool connect);
 
 /*
  * parse strings with connect arguments to find a particular field.
@@ -854,7 +829,7 @@ add_argument(char **argstr, int *max_len, char *arg_str, char *arg)
 	return 0;
 }
 
-static int build_options(char *argstr, int max_len, bool discover)
+int build_options(char *argstr, int max_len, bool discover)
 {
 	int len;
 
@@ -1263,7 +1238,7 @@ static void nvmf_get_host_identifiers(int ctrl_instance)
 	cfg.hostid = nvme_get_ctrl_attr(path, "hostid");
 }
 
-static int do_discover(char *argstr, bool connect)
+int do_discover(char *argstr, bool connect)
 {
 	struct nvmf_disc_rsp_page_hdr *log = NULL;
 	char *dev_name;
