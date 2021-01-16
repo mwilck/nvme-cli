@@ -32,6 +32,7 @@
 #include <libgen.h>
 #include <sys/stat.h>
 #include <stddef.h>
+#include <syslog.h>
 
 #include <sys/types.h>
 #include <arpa/inet.h>
@@ -46,6 +47,10 @@
 #include "util/argconfig.h"
 
 #include "common.h"
+#include "log.h"
+
+int log_level = LOG_NOTICE;
+bool log_timestamp;
 
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-id128.h>
@@ -86,7 +91,6 @@ static struct config {
 	int  hdr_digest;
 	int  data_digest;
 	bool persistent;
-	bool quiet;
 	bool matching_only;
 } cfg = { .ctrl_loss_tmo = NVMF_DEF_CTRL_LOSS_TMO };
 
@@ -345,7 +349,7 @@ static char *find_ctrl_with_connectargs(struct connect_args *args)
 
 	n = scandir(SYS_NVME, &devices, scan_ctrls_filter, alphasort);
 	if (n < 0) {
-		fprintf(stderr, "no NVMe controller(s) detected.\n");
+		log(LOG_ERR, "no NVMe controller(s) detected.\n");
 		return NULL;
 	}
 
@@ -353,7 +357,7 @@ static char *find_ctrl_with_connectargs(struct connect_args *args)
 		if (ctrl_matches_connectargs(devices[i]->d_name, args)) {
 			devname = strdup(devices[i]->d_name);
 			if (devname == NULL)
-				fprintf(stderr, "no memory for ctrl name %s\n",
+				log(LOG_ERR, "no memory for ctrl name %s\n",
 						devices[i]->d_name);
 			goto cleanup_devices;
 		}
@@ -415,7 +419,7 @@ static int add_ctrl(const char *argstr)
 
 	fd = open(PATH_NVME_FABRICS, O_RDWR);
 	if (fd < 0) {
-		fprintf(stderr, "Failed to open %s: %s\n",
+		log(LOG_ERR, "Failed to open %s: %s\n",
 			 PATH_NVME_FABRICS, strerror(errno));
 		ret = -errno;
 		goto out;
@@ -423,8 +427,8 @@ static int add_ctrl(const char *argstr)
 
 	ret = write(fd, argstr, len);
 	if (ret != len) {
-		if (errno != EALREADY || !cfg.quiet)
-			fprintf(stderr, "Failed to write to %s: %s\n",
+		if (errno != EALREADY)
+			log(LOG_NOTICE, "Failed to write to %s: %s\n",
 				 PATH_NVME_FABRICS, strerror(errno));
 		ret = -errno;
 		goto out_close;
@@ -432,7 +436,7 @@ static int add_ctrl(const char *argstr)
 
 	len = read(fd, buf, BUF_SIZE);
 	if (len < 0) {
-		fprintf(stderr, "Failed to read from %s: %s\n",
+		log(LOG_ERR, "Failed to read from %s: %s\n",
 			 PATH_NVME_FABRICS, strerror(errno));
 		ret = -errno;
 		goto out_close;
@@ -459,7 +463,7 @@ static int add_ctrl(const char *argstr)
 	}
 
 out_fail:
-	fprintf(stderr, "Failed to parse ctrl info for \"%s\"\n", argstr);
+	log(LOG_ERR, "Failed to parse ctrl info for \"%s\"\n", argstr);
 	ret = -EINVAL;
 out_close:
 	close(fd);
@@ -474,7 +478,7 @@ static int remove_ctrl_by_path(char *sysfs_path)
 	fd = open(sysfs_path, O_WRONLY);
 	if (fd < 0) {
 		ret = -errno;
-		fprintf(stderr, "Failed to open %s: %s\n", sysfs_path,
+		log(LOG_ERR, "Failed to open %s: %s\n", sysfs_path,
 				strerror(errno));
 		goto out;
 	}
@@ -528,7 +532,7 @@ static int nvmf_get_log_page_discovery(const char *dev_path,
 	fd = open(dev_path, O_RDWR);
 	if (fd < 0) {
 		error = -errno;
-		fprintf(stderr, "Failed to open %s: %s\n",
+		log(LOG_ERR, "Failed to open %s: %s\n",
 				dev_path, strerror(errno));
 		goto out;
 	}
@@ -699,7 +703,7 @@ static void save_discovery_log(struct nvmf_disc_rsp_page_hdr *log, int numrec)
 
 	fd = open(cfg.raw, O_CREAT|O_RDWR|O_TRUNC, S_IRUSR|S_IWUSR);
 	if (fd < 0) {
-		fprintf(stderr, "failed to open %s: %s\n",
+		log(LOG_ERR, "failed to open %s: %s\n",
 			cfg.raw, strerror(errno));
 		return;
 	}
@@ -708,7 +712,7 @@ static void save_discovery_log(struct nvmf_disc_rsp_page_hdr *log, int numrec)
 			numrec * sizeof(struct nvmf_disc_rsp_page_entry);
 	ret = write(fd, log, len);
 	if (ret < 0)
-		fprintf(stderr, "failed to write to %s: %s\n",
+		log(LOG_ERR, "failed to write to %s: %s\n",
 			cfg.raw, strerror(errno));
 	else
 		printf("Discovery log is saved to %s\n", cfg.raw);
@@ -855,13 +859,13 @@ static int build_options(char *argstr, int max_len, bool discover)
 	int len;
 
 	if (!cfg.transport) {
-		fprintf(stderr, "need a transport (-t) argument\n");
+		log(LOG_ERR, "need a transport (-t) argument\n");
 		return -EINVAL;
 	}
 
 	if (strncmp(cfg.transport, "loop", 4)) {
 		if (!cfg.traddr) {
-			fprintf(stderr, "need a address (-a) argument\n");
+			log(LOG_ERR, "need a address (-a) argument\n");
 			return -EINVAL;
 		}
 	}
@@ -945,7 +949,7 @@ static int hostname2traddr(struct config *cfg)
 
 	ret = getaddrinfo(cfg->traddr, NULL, &hints, &host_info);
 	if (ret) {
-		fprintf(stderr, "failed to resolve host %s info\n", cfg->traddr);
+		log(LOG_ERR, "failed to resolve host %s info\n", cfg->traddr);
 		return ret;
 	}
 
@@ -961,14 +965,14 @@ static int hostname2traddr(struct config *cfg)
 			addrstr, NVMF_TRADDR_SIZE);
 		break;
 	default:
-		fprintf(stderr, "unrecognized address family (%d) %s\n",
+		log(LOG_ERR, "unrecognized address family (%d) %s\n",
 			host_info->ai_family, cfg->traddr);
 		ret = -EINVAL;
 		goto free_addrinfo;
 	}
 
 	if (!p) {
-		fprintf(stderr, "failed to get traddr for %s\n", cfg->traddr);
+		log(LOG_ERR, "failed to get traddr for %s\n", cfg->traddr);
 		ret = -errno;
 		goto free_addrinfo;
 	}
@@ -996,7 +1000,7 @@ retry:
 	case NVME_NQN_NVME:
 		break;
 	default:
-		fprintf(stderr, "skipping unsupported subtype %d\n",
+		log(LOG_ERR, "skipping unsupported subtype %d\n",
 			 e->subtype);
 		return -EINVAL;
 	}
@@ -1085,7 +1089,7 @@ retry:
 
 	transport = trtype_str(e->trtype);
 	if (!strcmp(transport, "unrecognized")) {
-		fprintf(stderr, "skipping unsupported transport %d\n",
+		log(LOG_ERR, "skipping unsupported transport %d\n",
 				 e->trtype);
 		return -EINVAL;
 	}
@@ -1131,7 +1135,7 @@ retry:
 			p += len;
 			break;
 		default:
-			fprintf(stderr, "skipping unsupported adrfam\n");
+			log(LOG_ERR, "skipping unsupported adrfam\n");
 			return -EINVAL;
 		}
 		break;
@@ -1146,7 +1150,7 @@ retry:
 			p += len;
 			break;
 		default:
-			fprintf(stderr, "skipping unsupported adrfam\n");
+			log(LOG_ERR, "skipping unsupported adrfam\n");
 			return -EINVAL;
 		}
 		break;
@@ -1231,9 +1235,7 @@ static int connect_ctrls(struct nvmf_disc_rsp_page_hdr *log, int numrec)
 		if (instance == -EALREADY) {
 			const char *traddr = log->entries[i].traddr;
 
-			if (!cfg.quiet)
-				fprintf(stderr,
-					"traddr=%.*s is already connected\n",
+			log(LOG_NOTICE, "traddr=%.*s is already connected\n",
 					space_strip_len(NVMF_TRADDR_SIZE,
 							traddr),
 					traddr);
@@ -1321,12 +1323,12 @@ static int do_discover(char *argstr, bool connect)
 			print_discovery_log(log, numrec);
 		break;
 	case DISC_GET_NUMRECS:
-		fprintf(stderr,
+		log(LOG_ERR,
 			"Get number of discovery log entries failed.\n");
 		ret = status;
 		break;
 	case DISC_GET_LOG:
-		fprintf(stderr, "Get discovery log entries failed.\n");
+		log(LOG_ERR, "Get discovery log entries failed.\n");
 		ret = status;
 		break;
 	case DISC_NO_LOG:
@@ -1338,12 +1340,12 @@ static int do_discover(char *argstr, bool connect)
 		ret = -EAGAIN;
 		break;
 	case DISC_NOT_EQUAL:
-		fprintf(stderr,
+		log(LOG_ERR,
 		"Numrec values of last two get discovery log page not equal\n");
 		ret = -EBADSLT;
 		break;
 	default:
-		fprintf(stderr, "Get discovery log page failed: %d\n", ret);
+		log(LOG_ERR, "Get discovery log page failed: %d\n", ret);
 		break;
 	}
 
@@ -1359,7 +1361,7 @@ static int discover_from_conf_file(const char *desc, char *argstr,
 
 	f = fopen(PATH_NVMF_DISC, "r");
 	if (f == NULL) {
-		fprintf(stderr, "No discover params given and no %s conf\n",
+		log(LOG_ERR, "No discover params given and no %s conf\n",
 			PATH_NVMF_DISC);
 		return -EINVAL;
 	}
@@ -1370,14 +1372,14 @@ static int discover_from_conf_file(const char *desc, char *argstr,
 
 		args = strdup(line);
 		if (!args) {
-			fprintf(stderr, "failed to strdup args\n");
+			log(LOG_ERR, "failed to strdup args\n");
 			ret = -ENOMEM;
 			goto out;
 		}
 
 		argv = calloc(MAX_DISC_ARGS, BUF_SIZE);
 		if (!argv) {
-			fprintf(stderr, "failed to allocate argv vector\n");
+			log(LOG_ERR, "failed to allocate argv vector\n");
 			free(args);
 			ret = -ENOMEM;
 			goto out;
@@ -1428,6 +1430,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 {
 	char argstr[BUF_SIZE];
 	int ret;
+	bool quiet = false;
 
 	OPT_ARGS(opts) = {
 		OPT_LIST("transport",      't', &cfg.transport,       "transport type"),
@@ -1449,7 +1452,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 		OPT_INT("nr-poll-queues",  'P', &cfg.nr_poll_queues,  "number of poll queues to use (default 0)"),
 		OPT_INT("queue-size",      'Q', &cfg.queue_size,      "number of io queue elements to use (default 128)"),
 		OPT_FLAG("persistent",     'p', &cfg.persistent,      "persistent discovery connection"),
-		OPT_FLAG("quiet",          'S', &cfg.quiet,           "suppress already connected errors"),
+		OPT_FLAG("quiet",          'S', &quiet,               "suppress already connected errors"),
 		OPT_FLAG("matching",       'm', &cfg.matching_only,   "connect only records matching the traddr"),
 		OPT_END()
 	};
@@ -1458,6 +1461,9 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 	ret = argconfig_parse(argc, argv, desc, opts);
 	if (ret)
 		goto out;
+
+	if (quiet)
+		log_level = LOG_WARNING;
 
 	if (cfg.device && !strcmp(cfg.device, "none"))
 		cfg.device = NULL;
@@ -1534,7 +1540,7 @@ int fabrics_connect(const char *desc, int argc, char **argv)
 		goto out;
 
 	if (!cfg.nqn) {
-		fprintf(stderr, "need a -n argument\n");
+		log(LOG_ERR, "need a -n argument\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -1572,7 +1578,7 @@ static int disconnect_subsys(char *nqn, char *ctrl)
 
 	fd = open(sysfs_nqn_path, O_RDONLY);
 	if (fd < 0) {
-		fprintf(stderr, "Failed to open %s: %s\n",
+		log(LOG_ERR, "Failed to open %s: %s\n",
 				sysfs_nqn_path, strerror(errno));
 		goto free;
 	}
@@ -1646,7 +1652,7 @@ int fabrics_disconnect(const char *desc, int argc, char **argv)
 		goto out;
 
 	if (!cfg.nqn && !cfg.device) {
-		fprintf(stderr, "need a -n or -d argument\n");
+		log(LOG_ERR, "need a -n or -d argument\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -1654,7 +1660,7 @@ int fabrics_disconnect(const char *desc, int argc, char **argv)
 	if (cfg.nqn) {
 		ret = disconnect_by_nqn(cfg.nqn);
 		if (ret < 0)
-			fprintf(stderr, "Failed to disconnect by NQN: %s\n",
+			log(LOG_ERR, "Failed to disconnect by NQN: %s\n",
 				cfg.nqn);
 		else {
 			printf("NQN:%s disconnected %d controller(s)\n", cfg.nqn, ret);
@@ -1665,7 +1671,7 @@ int fabrics_disconnect(const char *desc, int argc, char **argv)
 	if (cfg.device) {
 		ret = disconnect_by_device(cfg.device);
 		if (ret)
-			fprintf(stderr,
+			log(LOG_ERR,
 				"Failed to disconnect by device name: %s\n",
 				cfg.device);
 	}
@@ -1689,7 +1695,7 @@ int fabrics_disconnect_all(const char *desc, int argc, char **argv)
 
 	err = scan_subsystems(&t, NULL, 0);
 	if (err) {
-		fprintf(stderr, "Failed to scan namespaces\n");
+		log(LOG_ERR, "Failed to scan namespaces\n");
 		goto out;
 	}
 
