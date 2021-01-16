@@ -487,6 +487,7 @@ static int monitor_parse_opts(const char *desc, int argc, char **argv)
 
 	OPT_ARGS(opts) = {
 		OPT_FLAG("autoconnect",    'A', &mon_cfg.autoconnect, "automatically connect newly discovered controllers"),
+		OPT_FLAG("persistent",     'p', &cfg.persistent,      "persistent discovery connections"),
 		OPT_FLAG("silent",         'S', &quiet,               "log level: silent"),
 		OPT_FLAG("verbose",        'v', &verbose,             "log level: verbose"),
 		OPT_FLAG("debug",          'D', &debug,               "log level: debug"),
@@ -514,6 +515,10 @@ static int monitor_parse_opts(const char *desc, int argc, char **argv)
 			ret = 0;
 		}
 	}
+
+	if (cfg.persistent && !cfg.keep_alive_tmo)
+		cfg.keep_alive_tmo = NVMF_DEF_DISC_TMO;
+
 	return ret;
 }
 
