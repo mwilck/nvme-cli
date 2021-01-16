@@ -30,7 +30,9 @@
 
 #include "common.h"
 #include "nvme-status.h"
+#include "nvme.h"
 #include "util/argconfig.h"
+#include "fabrics.h"
 #include "monitor.h"
 #define LOG_FUNCNAME 1
 #include "log.h"
@@ -117,11 +119,113 @@ static int monitor_init_signals(void)
 	return 0;
 }
 
+static int monitor_get_fc_uev_props(struct udev_device *ud,
+				    char *traddr, size_t tra_sz,
+				    char *host_traddr, size_t htra_sz)
+{
+	const char *sysname = udev_device_get_sysname(ud);
+	const char *tra = NULL, *host_tra = NULL;
+	bool fc_event_seen = false;
+	struct udev_list_entry *entry;
+
+	entry = udev_device_get_properties_list_entry(ud);
+	if (!entry) {
+		log(LOG_NOTICE, "%s: emtpy properties list\n", sysname);
+		return -ENOENT;
+	}
+
+	for (; entry; entry = udev_list_entry_get_next(entry)) {
+		const char *name = udev_list_entry_get_name(entry);
+
+		if (!strcmp(name, "FC_EVENT") &&
+		    !strcmp(udev_list_entry_get_value(entry), "nvmediscovery"))
+				fc_event_seen = true;
+		else if (!strcmp(name, "NVMEFC_HOST_TRADDR"))
+			host_tra = udev_list_entry_get_value(entry);
+		else if (!strcmp(name, "NVMEFC_TRADDR"))
+			tra = udev_list_entry_get_value(entry);
+	}
+	if (!fc_event_seen) {
+		log(LOG_DEBUG, "%s: FC_EVENT property missing or unsupported\n",
+		    sysname);
+		return -EINVAL;
+	}
+	if (!tra || !host_tra) {
+		log(LOG_WARNING, "%s: transport properties missing\n", sysname);
+		return -EINVAL;
+	}
+
+	if (!memccpy(traddr, tra, '\0', tra_sz) ||
+	    !memccpy(host_traddr, host_tra, '\0', htra_sz)) {
+		log(LOG_ERR, "traddr (%zu) or host_traddr (%zu) overflow\n",
+		    strlen(traddr), strlen(host_traddr));
+		return -ENAMETOOLONG;
+	}
+
+	return 0;
+}
+
+static int monitor_discovery(char *transport, char *traddr, char *trsvcid,
+			     char *host_traddr)
+{
+	char argstr[BUF_SIZE];
+	pid_t pid;
+	int rc;
+
+	pid = fork();
+	if (pid == -1) {
+		log(LOG_ERR, "failed to fork discovery task: %m");
+		return -errno;
+	} else if (pid > 0)
+		return 0;
+
+	log(LOG_NOTICE, "starting %s discovery for %s==>%s(%s)\n",
+	    transport, host_traddr, traddr, trsvcid ? trsvcid : "none");
+	cfg.nqn = NVME_DISC_SUBSYS_NAME;
+	cfg.transport = transport;
+	cfg.traddr = traddr;
+	cfg.trsvcid = trsvcid;
+	cfg.host_traddr = host_traddr;
+	/* Without the following, the kernel returns EINVAL */
+	cfg.tos = -1;
+
+	rc = build_options(argstr, sizeof(argstr), true);
+	log(LOG_DEBUG, "%s\n", argstr);
+	rc = do_discover(argstr, mon_cfg.autoconnect);
+
+	exit(-rc);
+	/* not reached */
+	return rc;
+}
+
+static void monitor_handle_fc_uev(struct udev_device *ud)
+{
+	const char *action = udev_device_get_action(ud);
+	const char *sysname = udev_device_get_sysname(ud);
+	char traddr[NVMF_TRADDR_SIZE], host_traddr[NVMF_TRADDR_SIZE];
+
+	if (strcmp(action, "change") || strcmp(sysname, "fc_udev_device"))
+		return;
+
+	if (monitor_get_fc_uev_props(ud, traddr, sizeof(traddr),
+				     host_traddr, sizeof(host_traddr)))
+		return;
+
+	monitor_discovery("fc", traddr, NULL, host_traddr);
+}
+
 static void monitor_handle_udevice(struct udev_device *ud)
 {
-	log(LOG_INFO, "uevent: %s %s\n",
-		udev_device_get_action(ud),
-		udev_device_get_sysname(ud));
+	const char *subsys  = udev_device_get_subsystem(ud);
+
+	if (log_level >= LOG_INFO) {
+		const char *action = udev_device_get_action(ud);
+		const char *syspath = udev_device_get_syspath(ud);
+
+		log(LOG_INFO, "%s %s\n", action, syspath);
+	}
+	if (!strcmp(subsys, "fc"))
+		monitor_handle_fc_uev(ud);
 }
 
 static void monitor_handle_uevents(struct udev_monitor *monitor)
