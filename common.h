@@ -12,4 +12,16 @@
 #define __stringify_1(x...) #x
 #define __stringify(x...)  __stringify_1(x)
 
+#define CLEANUP_FUNC(type) \
+static void __cleanup_ ## type ##_p(type ** __p) \
+{						 \
+	if (*__p) {				 \
+		free(*__p);			 \
+		*__p = NULL;			 \
+	}					 \
+}
+
+#define CLEANUP(__t, __v) \
+	__t *__v __attribute__((cleanup(__cleanup_ ## __t ## _p)))
+
 #endif
