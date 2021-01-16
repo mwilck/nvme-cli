@@ -26,6 +26,8 @@
 #include <limits.h>
 #include <syslog.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <sys/epoll.h>
 
 #include "common.h"
@@ -100,6 +102,13 @@ static void monitor_int_handler(int sig)
 	must_exit = 1;
 }
 
+static sig_atomic_t got_sigchld;
+
+static void monitor_chld_handler(int sig)
+{
+	got_sigchld = 1;
+}
+
 static sigset_t orig_sigmask;
 
 static int monitor_init_signals(void)
@@ -117,6 +126,9 @@ static int monitor_init_signals(void)
 	if (sigaction(SIGTERM, &sa, NULL) == -1)
 		return -errno;
 	if (sigaction(SIGINT, &sa, NULL) == -1)
+		return -errno;
+	sa.sa_handler = monitor_chld_handler;
+	if (sigaction(SIGCHLD, &sa, NULL) == -1)
 		return -errno;
 	return 0;
 }
@@ -336,6 +348,34 @@ static void monitor_handle_uevents(struct udev_monitor *monitor)
 	}
 }
 
+static void handle_sigchld(void)
+{
+	while (true) {
+		int wstatus;
+		pid_t pid;
+
+		pid = waitpid(-1, &wstatus, WNOHANG);
+		switch(pid) {
+		case -1:
+			if (errno != ECHILD)
+				log(LOG_ERR, "error in waitpid: %m\n");
+			return;
+		case 0:
+			return;
+		default:
+			break;
+		}
+		if (!WIFEXITED(wstatus))
+			log(LOG_WARNING, "child %ld didn't exit normally\n",
+			    (long)pid);
+		else if (WEXITSTATUS(wstatus) != 0)
+			log(LOG_NOTICE, "child %ld exited with status \"%s\"\n",
+			    (long)pid, strerror(WEXITSTATUS(wstatus)));
+		else
+			log(LOG_DEBUG, "child %ld exited normally\n", (long)pid);
+	};
+}
+
 #define MAX_EVENTS 1
 static int monitor_main_loop(struct udev_monitor *monitor)
 {
@@ -357,13 +397,19 @@ static int monitor_main_loop(struct udev_monitor *monitor)
 	sigfillset(&ep_mask);
 	sigdelset(&ep_mask, SIGTERM);
 	sigdelset(&ep_mask, SIGINT);
+	sigdelset(&ep_mask, SIGCHLD);
 	while (1) {
 		int rc, i;
 
 		rc = epoll_pwait(ep_fd, events, MAX_EVENTS, -1, &ep_mask);
 		if (rc == -1 && errno == EINTR) {
-			log(LOG_NOTICE, "monitor: exit signal received\n");
-			return 0;
+			if (must_exit) {
+				log(LOG_NOTICE, "monitor: exit signal received\n");
+				return 0;
+			} else if (got_sigchld) {
+				got_sigchld = 0;
+				handle_sigchld();
+			}
 		} else if (rc == -1) {
 			log(LOG_ERR, "monitor: epoll_wait: %m\n");
 			return -errno;
