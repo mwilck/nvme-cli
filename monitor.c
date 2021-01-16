@@ -100,6 +100,8 @@ static void monitor_int_handler(int sig)
 	must_exit = 1;
 }
 
+static sigset_t orig_sigmask;
+
 static int monitor_init_signals(void)
 {
 	sigset_t mask;
@@ -110,13 +112,33 @@ static int monitor_init_signals(void)
 	 * for events.
 	 */
 	sigfillset(&mask);
-	if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1)
+	if (sigprocmask(SIG_BLOCK, &mask, &orig_sigmask) == -1)
 		return -errno;
 	if (sigaction(SIGTERM, &sa, NULL) == -1)
 		return -errno;
 	if (sigaction(SIGINT, &sa, NULL) == -1)
 		return -errno;
 	return 0;
+}
+
+static int child_reset_signals(void)
+{
+	int err = 0;
+	struct sigaction sa = { .sa_handler = SIG_DFL, };
+
+	if (sigaction(SIGTERM, &sa, NULL) == -1)
+		err = errno;
+	if (sigaction(SIGINT, &sa, NULL) == -1 && !err)
+		err = errno;
+	if (sigaction(SIGCHLD, &sa, NULL) == -1 && !err)
+		err = errno;
+
+	if (sigprocmask(SIG_SETMASK, &orig_sigmask, NULL) == -1 && !err)
+		err = errno;
+
+	if (err)
+		log(LOG_ERR, "error resetting signal handlers and mask\n");
+	return -err;
 }
 
 static int monitor_get_fc_uev_props(struct udev_device *ud,
@@ -176,8 +198,12 @@ static int monitor_discovery(char *transport, char *traddr, char *trsvcid,
 	if (pid == -1) {
 		log(LOG_ERR, "failed to fork discovery task: %m");
 		return -errno;
-	} else if (pid > 0)
+	} else if (pid > 0) {
+		log(LOG_DEBUG, "started discovery task %ld\n", (long)pid);
 		return 0;
+	}
+
+	child_reset_signals();
 
 	log(LOG_NOTICE, "starting %s discovery for %s==>%s(%s)\n",
 	    transport, host_traddr, traddr, trsvcid ? trsvcid : "none");
