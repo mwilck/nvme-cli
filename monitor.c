@@ -36,6 +36,7 @@
 #include "util/argconfig.h"
 #include "fabrics.h"
 #include "monitor.h"
+#include "conn-db.h"
 #define LOG_FUNCNAME 1
 #include "log.h"
 
@@ -199,12 +200,22 @@ static int monitor_get_fc_uev_props(struct udev_device *ud,
 	return 0;
 }
 
-static int monitor_discovery(char *transport, char *traddr, char *trsvcid,
-			     char *host_traddr)
+static int monitor_discovery(const char *transport, const char *traddr,
+			     const char *trsvcid, const char *host_traddr)
 {
 	char argstr[BUF_SIZE];
 	pid_t pid;
-	int rc;
+	int rc, db_rc;
+	struct nvme_connection *co = NULL;
+
+	db_rc = conndb_add(transport, traddr, trsvcid, host_traddr, &co);
+	if (db_rc != 0 && db_rc != -EEXIST)
+		return db_rc;
+
+	if (co->status == CS_DISC_RUNNING) {
+		co->discovery_pending = 1;
+		return -EAGAIN;
+	}
 
 	pid = fork();
 	if (pid == -1) {
@@ -212,17 +223,26 @@ static int monitor_discovery(char *transport, char *traddr, char *trsvcid,
 		return -errno;
 	} else if (pid > 0) {
 		log(LOG_DEBUG, "started discovery task %ld\n", (long)pid);
+
+		co->discovery_pending = 0;
+		co->status = CS_DISC_RUNNING;
+		co->discovery_task = pid;
+
 		return 0;
 	}
 
 	child_reset_signals();
 
-	log(LOG_NOTICE, "starting %s discovery for %s==>%s(%s)\n",
-	    transport, host_traddr, traddr, trsvcid ? trsvcid : "none");
+	log(LOG_NOTICE, "starting discovery for <%s>: %s ==> %s(%s) in state %s\n",
+	    transport, host_traddr, traddr,
+	    trsvcid && *trsvcid ? trsvcid : "none",
+	    conn_status_str(co->status));
+
+
 	cfg.nqn = NVME_DISC_SUBSYS_NAME;
 	cfg.transport = transport;
 	cfg.traddr = traddr;
-	cfg.trsvcid = trsvcid;
+	cfg.trsvcid = trsvcid && *trsvcid ? trsvcid : NULL;
 	cfg.host_traddr = host_traddr;
 	/* Without the following, the kernel returns EINVAL */
 	cfg.tos = -1;
@@ -351,6 +371,7 @@ static void monitor_handle_uevents(struct udev_monitor *monitor)
 static void handle_sigchld(void)
 {
 	while (true) {
+	struct nvme_connection *co;
 		int wstatus;
 		pid_t pid;
 
@@ -365,14 +386,33 @@ static void handle_sigchld(void)
 		default:
 			break;
 		}
-		if (!WIFEXITED(wstatus))
+		co = conndb_find_by_pid(pid);
+		if (!co) {
+			log(LOG_ERR, "no connection found for discovery task %ld\n",
+			    (long)pid);
+			continue;
+		}
+		if (!WIFEXITED(wstatus)) {
 			log(LOG_WARNING, "child %ld didn't exit normally\n",
 			    (long)pid);
-		else if (WEXITSTATUS(wstatus) != 0)
+			co->status = CS_FAILED;
+		} else if (WEXITSTATUS(wstatus) != 0) {
 			log(LOG_NOTICE, "child %ld exited with status \"%s\"\n",
 			    (long)pid, strerror(WEXITSTATUS(wstatus)));
-		else
+			co->status = CS_FAILED;
+			co->did_discovery = 1;
+			co->discovery_result = WEXITSTATUS(wstatus);
+		} else {
 			log(LOG_DEBUG, "child %ld exited normally\n", (long)pid);
+			co->status = CS_ONLINE;
+			co->successful_discovery = co->did_discovery = 1;
+			co->discovery_result = 0;
+		}
+		if (co->discovery_pending) {
+			log(LOG_NOTICE, "new discovery pending - restarting\n");
+			monitor_discovery(co->transport, co->traddr,
+					  co->trsvcid, co->host_traddr);
+		}
 	};
 }
 
