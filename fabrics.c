@@ -251,17 +251,22 @@ empty_field:
 	return strdup("\0");
 }
 
-static int ctrl_instance(char *device)
+int ctrl_instance(const char *device)
 {
 	char d[64];
+	const char *p;
 	int ret, instance;
 
-	device = basename(device);
-	ret = sscanf(device, "nvme%d", &instance);
+	p = strrchr(device, '/');
+	if (p == NULL)
+		p = device;
+	else
+		p++;
+	ret = sscanf(p, "nvme%d", &instance);
 	if (ret <= 0)
 		return -EINVAL;
 	if (snprintf(d, sizeof(d), "nvme%d", instance) <= 0 ||
-	    strcmp(device, d))
+	    strcmp(p, d))
 		return -EINVAL;
 	return instance;
 }
@@ -272,7 +277,7 @@ static int ctrl_instance(char *device)
  * given.
  * Return true/false based on whether it matches
  */
-static bool ctrl_matches_connectargs(char *name, struct connect_args *args)
+static bool ctrl_matches_connectargs(const char *name, struct connect_args *args)
 {
 	struct connect_args cargs;
 	bool found = false;
@@ -814,7 +819,7 @@ add_int_argument(char **argstr, int *max_len, char *arg_str, int arg,
 }
 
 static int
-add_argument(char **argstr, int *max_len, char *arg_str, char *arg)
+add_argument(char **argstr, int *max_len, char *arg_str, const char *arg)
 {
 	int len;
 
@@ -1540,7 +1545,7 @@ static int scan_sys_nvme_filter(const struct dirent *d)
 /*
  * Returns 1 if disconnect occurred, 0 otherwise.
  */
-static int disconnect_subsys(char *nqn, char *ctrl)
+static int disconnect_subsys(const char *nqn, char *ctrl)
 {
 	char *sysfs_nqn_path = NULL, *sysfs_del_path = NULL;
 	char subsysnqn[NVMF_NQN_SIZE] = {};
@@ -1578,7 +1583,7 @@ static int disconnect_subsys(char *nqn, char *ctrl)
 /*
  * Returns the number of controllers successfully disconnected.
  */
-static int disconnect_by_nqn(char *nqn)
+static int disconnect_by_nqn(const char *nqn)
 {
 	struct dirent **devices = NULL;
 	int i, n, ret = 0;
@@ -1600,7 +1605,7 @@ static int disconnect_by_nqn(char *nqn)
 	return ret;
 }
 
-static int disconnect_by_device(char *device)
+static int disconnect_by_device(const char *device)
 {
 	int instance;
 

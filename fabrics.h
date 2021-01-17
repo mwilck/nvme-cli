@@ -13,13 +13,13 @@ extern int fabrics_disconnect_all(const char *desc, int argc, char **argv);
 /* Symbols used by monitor.c */
 
 struct config {
-	char *nqn;
-	char *transport;
-	char *traddr;
-	char *trsvcid;
-	char *host_traddr;
-	char *hostnqn;
-	char *hostid;
+	const char *nqn;
+	const char *transport;
+	const char *traddr;
+	const char *trsvcid;
+	const char *host_traddr;
+	const char *hostnqn;
+	const char *hostid;
 	int  nr_io_queues;
 	int  nr_write_queues;
 	int  nr_poll_queues;
@@ -29,7 +29,7 @@ struct config {
 	int  ctrl_loss_tmo;
 	int  tos;
 	char *raw;
-	char *device;
+	const char *device;
 	int  duplicate_connect;
 	int  disable_sqflow;
 	int  hdr_digest;
@@ -43,5 +43,6 @@ extern struct config cfg;
 
 int build_options(char *argstr, int max_len, bool discover);
 int do_discover(char *argstr, bool connect);
+int ctrl_instance(const char *device);
 
 #endif
