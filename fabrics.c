@@ -101,7 +101,7 @@ static const match_table_t opt_tokens = {
 	{ OPT_ERR,		NULL		},
 };
 
-static const char *arg_str(const char * const *strings,
+const char *arg_str(const char * const *strings,
 		size_t array_size, size_t idx)
 {
 	if (idx < array_size && strings[idx])
@@ -207,7 +207,7 @@ int do_discover(char *argstr, bool connect);
  * If field found, return string containing field value. If field
  * not found, return an empty string.
  */
-static char *parse_conn_arg(char *conargs, const char delim, const char *field)
+char *parse_conn_arg(char *conargs, const char delim, const char *field)
 {
 	char *s, *e;
 	size_t cnt;
@@ -475,7 +475,7 @@ out:
 	return ret;
 }
 
-static int remove_ctrl(int instance)
+int remove_ctrl(int instance)
 {
 	char *sysfs_path;
 	int ret;

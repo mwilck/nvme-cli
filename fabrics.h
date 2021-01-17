@@ -12,6 +12,8 @@ extern int fabrics_disconnect_all(const char *desc, int argc, char **argv);
 
 /* Symbols used by monitor.c */
 
+const char *arg_str(const char * const *strings, size_t array_size, size_t idx);
+
 struct config {
 	const char *nqn;
 	const char *transport;
@@ -44,5 +46,7 @@ extern struct config cfg;
 int build_options(char *argstr, int max_len, bool discover);
 int do_discover(char *argstr, bool connect);
 int ctrl_instance(const char *device);
+char *parse_conn_arg(char *conargs, const char delim, const char *field);
+int remove_ctrl(int instance);
 
 #endif
