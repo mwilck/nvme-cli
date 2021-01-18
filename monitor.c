@@ -630,6 +630,34 @@ static int monitor_remove_discovery_ctrl(struct nvme_connection *co,
 	return CD_CB_OK;
 }
 
+static int monitor_kill_discovery_task(struct nvme_connection *co,
+				       void *arg __attribute__((unused)))
+{
+	int wstatus;
+	pid_t pid, wpid = -1;
+
+	if (co->status != CS_DISC_RUNNING)
+		return CD_CB_OK;
+
+	pid = co->discovery_task;
+	co->status = CS_FAILED;
+	if (kill(co->discovery_task, SIGTERM) == -1) {
+		log(LOG_ERR, "failed to send SIGTERM to pid %ld: %m\n",
+		    (long)pid);
+		wpid = waitpid(pid, &wstatus, WNOHANG);
+	} else {
+		log(LOG_DEBUG, "sent SIGTERM to pid %ld, waiting\n", (long)pid);
+		wpid = waitpid(pid, &wstatus, 0);
+	}
+	if (wpid != pid) {
+		log(LOG_ERR, "failed to wait for %ld: %m\n", (long)pid);
+		return CD_CB_ERR;
+	} else {
+		log(LOG_DEBUG, "child %ld terminated\n", (long)pid);
+		return CD_CB_OK;
+	}
+}
+
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
 {
 	bool quiet = false;
@@ -696,9 +724,12 @@ int aen_monitor(const char *desc, int argc, char **argv)
 		ret = monitor_main_loop(monitor);
 		udev_monitor_unref(monitor);
 	}
+
+	conndb_for_each(monitor_kill_discovery_task, NULL);
 	if (mon_cfg.autoconnect || mon_cfg.start_ctrls)
 		conndb_for_each(monitor_remove_discovery_ctrl, NULL);
 	conndb_free();
+
 	udev = udev_unref(udev);
 	if (mon_cfg.autoconnect && !mon_cfg.skip_udev_on_exit)
 		monitor_enable_udev_rules();
