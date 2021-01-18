@@ -201,12 +201,14 @@ static int monitor_get_fc_uev_props(struct udev_device *ud,
 }
 
 static int monitor_discovery(const char *transport, const char *traddr,
-			     const char *trsvcid, const char *host_traddr)
+			     const char *trsvcid, const char *host_traddr,
+			     const char *devname)
 {
 	char argstr[BUF_SIZE];
 	pid_t pid;
 	int rc, db_rc;
 	struct nvme_connection *co = NULL;
+	char *device = NULL;
 
 	db_rc = conndb_add(transport, traddr, trsvcid, host_traddr, &co);
 	if (db_rc != 0 && db_rc != -EEXIST)
@@ -227,7 +229,15 @@ static int monitor_discovery(const char *transport, const char *traddr,
 		co->discovery_pending = 0;
 		co->status = CS_DISC_RUNNING;
 		co->discovery_task = pid;
+		if (devname) {
+			int instance = ctrl_instance(devname);
 
+			if (instance < 0) {
+				log(LOG_ERR, "unexpected devname: %s\n",
+				    devname);
+			} else
+				co->discovery_instance = instance;
+		}
 		return 0;
 	}
 
@@ -238,12 +248,26 @@ static int monitor_discovery(const char *transport, const char *traddr,
 	    trsvcid && *trsvcid ? trsvcid : "none",
 	    conn_status_str(co->status));
 
+	/*
+	 * Try to re-use existing controller. do_discovery() will check
+	 * if it matches the connection parameters.
+	 */
+	if (!devname && co->discovery_instance >= 0) {
+		if (asprintf(&device, "nvme%d", co->discovery_instance) == -1)
+			device = NULL;
+		else
+			devname = device;
+	}
+
+	if (devname)
+		log(LOG_INFO, "using discovery controller %s\n", devname);
 
 	cfg.nqn = NVME_DISC_SUBSYS_NAME;
 	cfg.transport = transport;
 	cfg.traddr = traddr;
 	cfg.trsvcid = trsvcid && *trsvcid ? trsvcid : NULL;
-	cfg.host_traddr = host_traddr;
+	cfg.host_traddr = host_traddr && *host_traddr ? host_traddr : NULL;
+	cfg.device = devname;
 	/* Without the following, the kernel returns EINVAL */
 	cfg.tos = -1;
 
@@ -251,6 +275,7 @@ static int monitor_discovery(const char *transport, const char *traddr,
 	log(LOG_DEBUG, "%s\n", argstr);
 	rc = do_discover(argstr, mon_cfg.autoconnect);
 
+	free(device);
 	exit(-rc);
 	/* not reached */
 	return rc;
@@ -269,7 +294,7 @@ static void monitor_handle_fc_uev(struct udev_device *ud)
 				     host_traddr, sizeof(host_traddr)))
 		return;
 
-	monitor_discovery("fc", traddr, NULL, host_traddr);
+	monitor_discovery("fc", traddr, NULL, host_traddr, NULL);
 }
 
 static int monitor_get_nvme_uev_props(struct udev_device *ud,
@@ -337,7 +362,8 @@ static void monitor_handle_nvme_uev(struct udev_device *ud)
 		return;
 
 	monitor_discovery(transport, traddr,
-			  strcmp(trsvcid, "none") ? trsvcid : NULL, host_traddr);
+			  strcmp(trsvcid, "none") ? trsvcid : NULL, host_traddr,
+			  udev_device_get_sysname(ud));
 }
 
 static void monitor_handle_udevice(struct udev_device *ud)
@@ -411,7 +437,7 @@ static void handle_sigchld(void)
 		if (co->discovery_pending) {
 			log(LOG_NOTICE, "new discovery pending - restarting\n");
 			monitor_discovery(co->transport, co->traddr,
-					  co->trsvcid, co->host_traddr);
+					  co->trsvcid, co->host_traddr, NULL);
 		}
 	};
 }
