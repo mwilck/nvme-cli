@@ -43,6 +43,7 @@
 static struct monitor_config {
 	bool autoconnect;
 	bool skip_udev_on_exit;
+	bool start_ctrls;
 } mon_cfg;
 
 static struct udev *udev;
@@ -544,6 +545,20 @@ static void monitor_enable_udev_rules(void)
 		log(LOG_INFO, "removed %s\n", autoconnect_rules);
 }
 
+static int monitor_setup_discovery_ctrl(struct nvme_connection *co,
+					void *arg __attribute__((unused)))
+{
+	int rc;
+
+	if (co->discovery_instance >= 0)
+		return CD_CB_OK;
+
+	rc = monitor_discovery(co->transport, co->traddr, co->trsvcid,
+			       co->host_traddr, NULL);
+
+	return rc ? CD_CB_ERR : CD_CB_OK;
+}
+
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
 {
 	bool quiet = false;
@@ -553,6 +568,7 @@ static int monitor_parse_opts(const char *desc, int argc, char **argv)
 
 	OPT_ARGS(opts) = {
 		OPT_FLAG("autoconnect",    'A', &mon_cfg.autoconnect, "automatically connect newly discovered controllers"),
+		OPT_FLAG("startup",        'U', &mon_cfg.start_ctrls, "start discovery controllers on startup"),
 		OPT_FLAG("persistent",     'p', &cfg.persistent,      "persistent discovery connections"),
 		OPT_FLAG("silent",         'S', &quiet,               "log level: silent"),
 		OPT_FLAG("verbose",        'v', &verbose,             "log level: verbose"),
@@ -604,6 +620,8 @@ int aen_monitor(const char *desc, int argc, char **argv)
 	ret = create_udev_monitor(&monitor);
 	if (ret == 0) {
 		conndb_init_from_sysfs();
+		if (mon_cfg.start_ctrls)
+			conndb_for_each(monitor_setup_discovery_ctrl, NULL);
 		ret = monitor_main_loop(monitor);
 		udev_monitor_unref(monitor);
 	}
