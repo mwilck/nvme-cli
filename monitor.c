@@ -603,9 +603,11 @@ int aen_monitor(const char *desc, int argc, char **argv)
 	}
 	ret = create_udev_monitor(&monitor);
 	if (ret == 0) {
+		conndb_init_from_sysfs();
 		ret = monitor_main_loop(monitor);
 		udev_monitor_unref(monitor);
 	}
+	conndb_free();
 	udev = udev_unref(udev);
 	if (mon_cfg.autoconnect && !mon_cfg.skip_udev_on_exit)
 		monitor_enable_udev_rules();

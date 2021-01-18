@@ -300,6 +300,7 @@ int conndb_init_from_sysfs(void)
 
 			if (instance >= 0) {
 				ci->c.discovery_instance = instance;
+				ci->c.discovery_ctrl_existed = 1;
 				log(LOG_DEBUG, "found discovery controller %s\n",
 				    devices[i]->d_name);
 			}
