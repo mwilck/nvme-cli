@@ -559,6 +559,39 @@ static int monitor_setup_discovery_ctrl(struct nvme_connection *co,
 	return rc ? CD_CB_ERR : CD_CB_OK;
 }
 
+static int monitor_remove_discovery_ctrl(struct nvme_connection *co,
+					void *arg __attribute__((unused)))
+{
+	char syspath[PATH_MAX];
+	int len;
+	CLEANUP(char, subsysnqn) = NULL;
+
+	if (co->discovery_instance == -1 || co->discovery_ctrl_existed)
+		return CD_CB_OK;
+
+	len = snprintf(syspath, sizeof(syspath), SYS_NVME "/nvme%d",
+		       co->discovery_instance);
+	if (len < 0 || len >= sizeof(syspath))
+		return CD_CB_ERR;
+
+	subsysnqn = nvme_get_ctrl_attr(syspath, "subsysnqn");
+	if (subsysnqn && !strcmp(subsysnqn, NVME_DISC_SUBSYS_NAME)) {
+		if (remove_ctrl(co->discovery_instance)) {
+			log(LOG_ERR,
+			    "failed to remove discovery controller /dev/nvme%d: %m\n",
+			    co->discovery_instance);
+			return CD_CB_ERR;
+		} else
+			log(LOG_INFO,
+			    "removed discovery controller /dev/nvme%d\n",
+			    co->discovery_instance);
+	} else
+		log(LOG_WARNING,
+		    "unexpected NQN %s on /dev/nvme%d, not removing controller\n",
+		    subsysnqn, co->discovery_instance);
+	return CD_CB_OK;
+}
+
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
 {
 	bool quiet = false;
@@ -625,6 +658,8 @@ int aen_monitor(const char *desc, int argc, char **argv)
 		ret = monitor_main_loop(monitor);
 		udev_monitor_unref(monitor);
 	}
+	if (mon_cfg.autoconnect || mon_cfg.start_ctrls)
+		conndb_for_each(monitor_remove_discovery_ctrl, NULL);
 	conndb_free();
 	udev = udev_unref(udev);
 	if (mon_cfg.autoconnect && !mon_cfg.skip_udev_on_exit)
