@@ -11,7 +11,7 @@ _cmds="list id-ctrl id-ns list-ns id-iocs create-ns delete-ns \
 	resv-report dsm flush compare read write write-zeroes \
 	write-uncor copy reset subsystem-reset show-regs discover \
 	connect-all connect disconnect version help \
-	intel lnvm memblaze list-subsys"
+	intel lnvm memblaze list-subsys monitor"
 
 nvme_list_opts () {
         local opts=""
@@ -218,6 +218,10 @@ nvme_list_opts () {
 			;;
 		"disconnect")
 		opts+=" --nqn -n --device -d"
+			;;
+		"monitor")
+		opts+=" --autoconnect -A --persistent -p --startup -U \
+			--hostnqn= -q --verbose -v --clockstamps -C"
 			;;
 		"version")
 		opts+=""
