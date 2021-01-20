@@ -1,0 +1,169 @@
+nvme-monitor(1)
+===============
+
+NAME
+----
+nvme-monitor - Monitor Discovery events and Discover and Connect automatically
+
+SYNOPSIS
+--------
+[verse]
+'nvme discover'
+		[--autoconnect            | -A
+		[--startup                | -U
+		[--persistent             | -p
+		[--hostnqn=<hostnqn>      | -q <hostnqn>]
+		[--hostid=<hostid>        | -I <hostid>]
+		[--keep-alive-tmo=<#>     | -k <#>]
+		[--reconnect-delay=<#>    | -c <#>]
+		[--ctrl-loss-tmo=<#>      | -l <#>]
+		[--hdr-digest             | -g]
+		[--data-digest            | -G]
+		[--nr-io-queues=<#>       | -i <#>]
+		[--nr-write-queues=<#>    | -W <#>]
+		[--nr-poll-queues=<#>     | -P <#>]
+		[--queue-size=<#>         | -Q <#>]
+		[--matching               | -m]
+		[--persistent             | -p]
+		[--silent                 | -S]
+		[--verbose                | -v]
+		[--debug                  | -D]
+		[--clockstamps            | -C]
+
+DESCRIPTION
+-----------
+Listen to Discovery events (Asynchronous Event Notifications, AENs) on
+NVMe-over-Fabrics (NVMeoF) Discovery Controllers and for other events related
+to NVMeoF Discovery, and optionally connect to newly discovered controllers.
+
+If no parameters are given, then 'nvme monitor' listens to Discovery-related
+udev events (uevents). If an event is received, it connects to the Discovery
+Controller and performs the equivalent of an 'nvme discover' on the associated
+transport address. If the '--autoconnect' option is given, it performs the
+equivalent of an 'nvme connect-all' instead. When run through a systemd
+service in '--autoconnect' mode, the monitor can be used as an alternative to
+the udev-rule based auto-activation of NVMeoF connections.
+
+Currently, the following event types are supported:
+
+- "Discovery Log Page Change" Asynchronous Event Notifications (AENs)
+  delivered via persistent connections to NVMeoF discovery controllers
+  connected to the discovery service (`nqn.2014-08.org.nvmexpress.discovery`).
+  Note that without the '--persistent' option, 'nvme monitor' will not create
+  persistent Discovery controllers itself, but it will receive and act upon
+  AENs sent from persistent Discovery Controllers which were created manually
+  or by other programs.
+
+- FC-NVMe auto-connect uevents sent when the FibreChannel transport discovers
+  N_Ports offering NVMe services.
+
+See the documentation for the nvme-connect-all(1) and nvme-discover(1)
+commands for further background.
+
+OPTIONS
+-------
+
+-A::
+--autoconnect::
+	If this option is given, 'nvme monitor' will attempt to connect to
+	newly discovered controllers.
+	In order to avoid race conditions with 'nvme connect-all' commands
+	spawned by udev rules via systemd's `nvmf-connect@.service`, an empty
+	rule is created under `/run/udev/rules.d/70-nvmf-autoconnect.rules`,
+	disabling the udev rules that start this service. The file will be
+	deleted when 'nvme monitor' terminates.
+	
+-U::
+--startup::
+	Look for existing NVMe connections (i.e. transport addresses with at
+	least one connected controller) during startup, start a discovery
+	controller on every detected connection, retrieve the log page and (if
+	'--autoconnect' is also given) connect to all discovered controllers.
+	Use the '--persistent' option to make the Discovery Controllers
+	persist after retrieving the Discovery Log page.
+
+-p::
+--persistent::
+	This option has the same meaning as for 'nvme discover'; Discovery
+	Controllers will remain after the Discovery Log Page has been
+	retrieved. This is necessary for receiving AENs from the transport
+	connection that the Discovery controller is associated with. Without
+	this option, AENs can only be received and acted upon if the
+	administrator manually creates persistent Discovery controller
+	connections.
+	When 'nvme monitor' terminates, it will attempt to take down all
+	Discovery Controllers it has created (i.e. ones that didn't already
+	exist when 'nvme monitor' was started.
+	
+-q <hostnqn>::
+--hostnqn=<hostnqn>::
+-I <hostid>::
+--hostid=<hostid>::
+-k <#>::
+--keep-alive-tmo=<#>::
+-c <#>::
+--reconnect-delay=<#>::
+-l <#>::
+--ctrl-loss-tmo=<#>::
+-g::
+--hdr-digest::
+-G::
+--data-digest::
+-i <#>::
+--nr-io-queues=<#>::
+-W <#>::
+--nr-write-queues=<#>::
+-P <#>::
+--nr-poll-queues=<#>::
+-Q <#>::
+--queue-size=<#>::
+-m::
+--matching::
+	These options have the same meaning as for 'nvme connect-all'. See the
+	man page nvme-connect-all(1) for details.
+
+-p::
+--persistent::
+	Don't remove the discovery controller after retrieving the discovery
+	log page.
+
+-S::
+--silent::
+	Only print warnings and severe error messages. Do not log discoveries
+	and newly created controllers.
+
+-v::
+--verbose::
+	Log informational messages. This option overrides '--silent'.
+
+-D::
+--debug::
+	Log informational and debug messages. This option overrieds '--silent'
+	and '--verbose'.
+
+
+EXAMPLES
+--------
+* Listen to FC-NVME events and AENs, creating persistent Discovery Controllers
+on the way, and automatically connect to all discovered controllers:
++
+------------
+# nvme discover --autoconnect --persistent
+------------
++
+* Like the above, but print more log messages and try to set up Discovery
+Controllers on startup, and using a different host NQN:
++
+-----------
+# nvme discover --autoconnect --persistent --startup --verbose \
+--hostqn=host1-rogue-nqn
+------------
+
+SEE ALSO
+--------
+nvme-discover(1)
+nvme-connect-all(1)
+
+NVME
+----
+Part of the nvme-user suite
