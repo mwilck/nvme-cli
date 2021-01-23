@@ -33,4 +33,6 @@ void usage(struct plugin *plugin);
 void general_help(struct plugin *plugin);
 int handle_plugin(int argc, char **argv, struct plugin *plugin);
 
+extern char *global_arg_0;
+
 #endif

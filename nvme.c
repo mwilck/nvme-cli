@@ -64,6 +64,7 @@
 
 static struct stat nvme_stat;
 const char *devicename;
+char *global_arg_0;
 
 static const char nvme_version_string[] = NVME_VERSION;
 
@@ -5046,6 +5047,7 @@ int main(int argc, char **argv)
 	}
 	setlocale(LC_ALL, "");
 
+	global_arg_0 = argv[0];
 	err = handle_plugin(argc - 1, &argv[1], nvme.extensions);
 	if (err == -ENOTTY)
 		general_help(&builtin);

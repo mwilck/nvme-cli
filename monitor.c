@@ -25,14 +25,18 @@
 #include <time.h>
 #include <limits.h>
 #include <syslog.h>
+#include <fcntl.h>
+#include <sched.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/epoll.h>
+#include <sys/mount.h>
 
 #include "common.h"
 #include "nvme-status.h"
 #include "nvme.h"
+#include "plugin.h"
 #include "util/argconfig.h"
 #include "fabrics.h"
 #include "monitor.h"
@@ -481,6 +485,102 @@ static void handle_sigchld(void)
 	};
 }
 
+static bool in_initrd(void)
+{
+	return access("/etc/initrd-release", F_OK) >= 0;
+}
+
+static int bind_mount(const char *root, const char *dir)
+{
+	CLEANUP(char, mountpnt) = NULL;
+
+	if (!dir || !root)
+		return -EINVAL;
+
+	if (asprintf(&mountpnt, "%s%s", root, dir) == -1)
+		return -errno;
+
+	if (mkdir(mountpnt, 0755) == -1) {
+		log(LOG_ERR, "failed to create %s: %m\n", mountpnt);
+		return -errno;
+	}
+
+	if (mount(dir, mountpnt, NULL, MS_BIND, NULL) == -1) {
+		log(LOG_ERR, "failed to bind-mount %s: %m\n", mountpnt);
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * Become a "root storage daemon"
+ * https://systemd.io/ROOT_STORAGE_DAEMONS/
+ */
+static int root_storage_daemon(void)
+{
+	static const char new_root[] = "/.nvme_root";
+	int rc;
+
+	if (!in_initrd())
+		return 0;
+
+	*global_arg_0 = '@';
+
+	if (unshare(CLONE_NEWNS) == -1) {
+		log(LOG_ERR, "failed to unshare mount namespace: %m\n");
+		return -errno;
+	}
+
+	/* This is necessary, otherwise the MS_MOVE below fails. */
+	if (mount(NULL, "/", NULL, MS_REC|MS_PRIVATE, NULL) < 0) {
+		log(LOG_ERR, "failed to make root mount private: %m\n");
+		return -errno;
+	}
+
+	if (mkdir(new_root, 0755) == -1) {
+		log(LOG_ERR, "failed to create %s: %m\n", new_root);
+		return -errno;
+	}
+
+	if (mount("tmp", new_root, "tmpfs", MS_NOEXEC|MS_NOSUID,
+		  "nr_blocks=1") == -1) {
+		log(LOG_ERR, "failed to mount tmpfs: %m\n");
+		return -errno;
+	}
+
+	if (chdir(new_root) < 0) {
+		log(LOG_ERR, "failed to chdir to %s: %m", new_root);
+		return -errno;
+	}
+
+	if ((rc = bind_mount(new_root, "/sys")) != 0 ||
+	    (rc = bind_mount(new_root, "/dev")) != 0 ||
+	    (rc = bind_mount(new_root, "/run")) != 0 ||
+	    (rc = bind_mount(new_root, "/proc")) != 0)
+		return rc;
+
+	if (mount(new_root, "/", NULL, MS_MOVE, NULL) == -1) {
+		log(LOG_ERR, "failed to move root FS: %m\n");
+		return -errno;
+	}
+
+	if (chroot(".") == -1) {
+		log(LOG_ERR, "failed to change root: %m\n");
+		return -errno;
+	}
+
+        if (chdir("/") == -1) {
+		log(LOG_ERR, "failed to chdir to \"/\": %m\n");
+		return -errno;
+	}
+
+	log(LOG_INFO, "%s: set up daemon environment successfully\n",
+	    global_arg_0);
+
+	return 0;
+}
+
 #define MAX_EVENTS 1
 static int monitor_main_loop(struct udev_monitor *monitor)
 {
@@ -724,11 +824,15 @@ int aen_monitor(const char *desc, int argc, char **argv)
 	ret = monitor_parse_opts(desc, argc, argv);
 	if (ret)
 		goto out;
+
 	ret = monitor_init_signals();
 	if (ret != 0) {
 		log(LOG_ERR, "monitor: failed to initialize signals: %m\n");
 		goto out;
 	}
+
+	(void)root_storage_daemon();
+
 	ret = create_udev_monitor(&monitor);
 	if (ret == 0) {
 		conndb_init_from_sysfs();
