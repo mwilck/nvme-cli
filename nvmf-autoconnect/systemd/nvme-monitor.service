@@ -2,17 +2,14 @@
 Description=NVMe Event Monitor for Automatical Subsystem Connection
 Documentation=man:nvme-monitor(1)
 DefaultDependencies=false
-Requires=systemd-udevd-kernel.socket
-RequiresMountsFor=/sys
+RequiresMountsFor=/sys /dev /proc /run
 Conflicts=shutdown.target
-After=systemd-udevd-kernel.socket
 Before=sysinit.target systemd-udev-trigger.service nvmefc-boot-connections.service
+IgnoreOnIsolate=true
 
 [Service]
 Type=simple
-Environment="NVME_MONITOR_OPTIONS=-A -p"
-EnvironmentFile=-/etc/sysconfig/nvme-monitor
-ExecStart=/usr/sbin/nvme monitor $NVME_MONITOR_OPTIONS
+ExecStart=/usr/sbin/nvme monitor -A -p
 KillMode=mixed
 
 [Install]
