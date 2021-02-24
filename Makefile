@@ -68,6 +68,10 @@ OBJS := nvme-print.o nvme-ioctl.o nvme-rpmb.o \
 	nvme-lightnvm.o fabrics.o nvme-models.o plugin.o \
 	nvme-status.o nvme-filters.o nvme-topology.o
 
+ifeq ($(HAVE_LIBUDEV),0)
+        OBJS += monitor.o
+endif
+
 UTIL_OBJS := util/argconfig.o util/suffix.o util/json.o util/parser.o util/log.o util/cleanup.o
 EVENT_OBJS := event/event.o event/timeout.o event/ts-util.o
 
