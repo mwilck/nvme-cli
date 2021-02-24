@@ -4,6 +4,7 @@ override CPPFLAGS += -D_GNU_SOURCE -D__CHECK_ENDIAN__
 LIBUUID = $(shell $(LD) -o /dev/null -luuid >/dev/null 2>&1; echo $$?)
 LIBHUGETLBFS = $(shell $(LD) -o /dev/null -lhugetlbfs >/dev/null 2>&1; echo $$?)
 HAVE_SYSTEMD = $(shell pkg-config --exists libsystemd  --atleast-version=242; echo $$?)
+HAVE_LIBUDEV = $(shell pkg-config --exists libudev; echo $$?)
 NVME = nvme
 INSTALL ?= install
 DESTDIR =
@@ -31,6 +32,11 @@ ifeq ($(LIBHUGETLBFS),0)
 endif
 
 INC=-Iutil
+
+ifeq ($(HAVE_LIBUDEV),0)
+	override LDFLAGS += -ludev
+	override CFLAGS += -DHAVE_LIBUDEV
+endif
 
 ifeq ($(HAVE_SYSTEMD),0)
 	override LDFLAGS += -lsystemd
@@ -62,7 +68,8 @@ OBJS := nvme-print.o nvme-ioctl.o nvme-rpmb.o \
 	nvme-lightnvm.o fabrics.o nvme-models.o plugin.o \
 	nvme-status.o nvme-filters.o nvme-topology.o
 
-UTIL_OBJS := util/argconfig.o util/suffix.o util/json.o util/parser.o util/log.o
+UTIL_OBJS := util/argconfig.o util/suffix.o util/json.o util/parser.o util/log.o util/cleanup.o
+EVENT_OBJS := event/event.o event/timeout.o event/ts-util.o
 
 PLUGIN_OBJS :=					\
 	plugins/intel/intel-nvme.o		\
@@ -83,11 +90,11 @@ PLUGIN_OBJS :=					\
 	plugins/transcend/transcend-nvme.o	\
 	plugins/zns/zns.o
 
-nvme: nvme.c nvme.h $(OBJS) $(PLUGIN_OBJS) $(UTIL_OBJS) NVME-VERSION-FILE
-	$(QUIET_CC)$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) $< -o $(NVME) $(OBJS) $(PLUGIN_OBJS) $(UTIL_OBJS) $(LDFLAGS)
+nvme: nvme.c nvme.h $(OBJS) $(PLUGIN_OBJS) $(UTIL_OBJS) $(EVENT_OBJS) NVME-VERSION-FILE
+	$(QUIET_CC)$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) $< -o $(NVME) $(OBJS) $(PLUGIN_OBJS) $(UTIL_OBJS) $(EVENT_OBJS) $(LDFLAGS)
 
-verify-no-dep: nvme.c nvme.h $(OBJS) $(UTIL_OBJS) NVME-VERSION-FILE
-	$(QUIET_CC)$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) $< -o $@ $(OBJS) $(UTIL_OBJS) $(LDFLAGS)
+verify-no-dep: nvme.c nvme.h $(OBJS) $(UTIL_OBJS)$(EVENT_OBJS)  NVME-VERSION-FILE
+	$(QUIET_CC)$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) $< -o $@ $(OBJS) $(UTIL_OBJS) $(EVENT_OBJS) $(LDFLAGS)
 
 nvme.o: nvme.c nvme.h nvme-print.h nvme-ioctl.h util/argconfig.h util/suffix.h nvme-lightnvm.h fabrics.h
 	$(QUIET_CC)$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) -c $<
@@ -107,7 +114,7 @@ test:
 all: doc
 
 clean:
-	$(RM) $(NVME) $(OBJS) $(PLUGIN_OBJS) $(UTIL_OBJS) *~ a.out NVME-VERSION-FILE *.tar* nvme.spec version control nvme-*.deb 70-nvmf-autoconnect.conf
+	$(RM) $(NVME) $(OBJS) $(PLUGIN_OBJS) $(UTIL_OBJS) $(EVENT_OBJS) *~ a.out NVME-VERSION-FILE *.tar* nvme.spec version control nvme-*.deb 70-nvmf-autoconnect.conf
 	$(MAKE) -C Documentation clean
 	$(RM) tests/*.pyc
 	$(RM) verify-no-dep
