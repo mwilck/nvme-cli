@@ -4,6 +4,7 @@ override CPPFLAGS += -D_GNU_SOURCE -D__CHECK_ENDIAN__
 LIBUUID = $(shell $(LD) -o /dev/null -luuid >/dev/null 2>&1; echo $$?)
 LIBHUGETLBFS = $(shell $(LD) -o /dev/null -lhugetlbfs >/dev/null 2>&1; echo $$?)
 HAVE_SYSTEMD = $(shell pkg-config --exists libsystemd  --atleast-version=242; echo $$?)
+HAVE_LIBUDEV = $(shell pkg-config --exists libudev; echo $$?)
 NVME = nvme
 INSTALL ?= install
 DESTDIR =
@@ -31,6 +32,11 @@ ifeq ($(LIBHUGETLBFS),0)
 endif
 
 INC=-I. -Iutil
+
+ifeq ($(HAVE_LIBUDEV),0)
+	override LDFLAGS += -ludev
+	override CFLAGS += -DHAVE_LIBUDEV
+endif
 
 ifeq ($(HAVE_SYSTEMD),0)
 	override LDFLAGS += -lsystemd
@@ -61,6 +67,10 @@ NVME_DPKG_VERSION=1~`lsb_release -sc`
 OBJS := nvme-print.o nvme-ioctl.o nvme-rpmb.o \
 	nvme-lightnvm.o fabrics.o nvme-models.o plugin.o \
 	nvme-status.o nvme-filters.o nvme-topology.o
+
+ifeq ($(HAVE_LIBUDEV),0)
+        OBJS += monitor.o
+endif
 
 UTIL_OBJS := util/argconfig.o util/suffix.o util/json.o util/parser.o \
 	util/cleanup.o util/log.o
