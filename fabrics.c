@@ -1336,8 +1336,9 @@ int do_discover(char *argstr, bool connect)
 	return ret;
 }
 
-static int discover_from_conf_file(const char *desc, char *argstr,
-		const struct argconfig_commandline_options *opts, bool connect)
+static OPT_ARGS(discover_opts);
+
+int discover_from_conf_file(const char *desc, char *argstr, bool connect)
 {
 	FILE *f;
 	char line[256], *ptr, *args, **argv;
@@ -1374,7 +1375,7 @@ static int discover_from_conf_file(const char *desc, char *argstr,
 		while ((ptr = strsep(&args, " =\n")) != NULL)
 			argv[argc++] = ptr;
 
-		err = argconfig_parse(argc, argv, desc, opts);
+		err = argconfig_parse(argc, argv, desc, discover_opts);
 		if (err)
 			goto free_and_continue;
 
@@ -1410,43 +1411,42 @@ out:
 	return ret;
 }
 
+static OPT_ARGS(discover_opts) = {
+	OPT_LIST("transport",      't', &fabrics_cfg.transport,       "transport type"),
+	OPT_LIST("traddr",         'a', &fabrics_cfg.traddr,          "transport address"),
+	OPT_LIST("trsvcid",        's', &fabrics_cfg.trsvcid,         "transport service id (e.g. IP port)"),
+	OPT_LIST("host-traddr",    'w', &fabrics_cfg.host_traddr,     "host traddr (e.g. FC WWN's)"),
+	OPT_LIST("hostnqn",        'q', &fabrics_cfg.hostnqn,         "user-defined hostnqn (if default not used)"),
+	OPT_LIST("hostid",         'I', &fabrics_cfg.hostid,          "user-defined hostid (if default not used)"),
+	OPT_LIST("raw",            'r', &fabrics_cfg.raw,             "raw output file"),
+	OPT_LIST("device",         'd', &fabrics_cfg.device,          "use existing discovery controller device"),
+	OPT_INT("keep-alive-tmo",  'k', &fabrics_cfg.keep_alive_tmo,  "keep alive timeout period in seconds"),
+	OPT_INT("reconnect-delay", 'c', &fabrics_cfg.reconnect_delay, "reconnect timeout period in seconds"),
+	OPT_INT("ctrl-loss-tmo",   'l', &fabrics_cfg.ctrl_loss_tmo,   "controller loss timeout period in seconds"),
+	OPT_INT("tos",             'T', &fabrics_cfg.tos,             "type of service"),
+	OPT_FLAG("hdr_digest",     'g', &fabrics_cfg.hdr_digest,      "enable transport protocol header digest (TCP transport)"),
+	OPT_FLAG("data_digest",    'G', &fabrics_cfg.data_digest,     "enable transport protocol data digest (TCP transport)"),
+	OPT_INT("nr-io-queues",    'i', &fabrics_cfg.nr_io_queues,    "number of io queues to use (default is core count)"),
+	OPT_INT("nr-write-queues", 'W', &fabrics_cfg.nr_write_queues, "number of write queues to use (default 0)"),
+	OPT_INT("nr-poll-queues",  'P', &fabrics_cfg.nr_poll_queues,  "number of poll queues to use (default 0)"),
+	OPT_INT("queue-size",      'Q', &fabrics_cfg.queue_size,      "number of io queue elements to use (default 128)"),
+	OPT_FLAG("persistent",     'p', &fabrics_cfg.persistent,      "persistent discovery connection"),
+	OPT_FLAG("quiet",          'S', &fabrics_cfg.quiet,           "suppress already connected errors"),
+	OPT_FLAG("matching",       'm', &fabrics_cfg.matching_only,   "connect only records matching the traddr"),
+	OPT_END()
+};
+
 int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 {
 	char argstr[BUF_SIZE];
 	int ret;
-	bool quiet = false;
-
-	OPT_ARGS(opts) = {
-		OPT_LIST("transport",      't', &fabrics_cfg.transport,       "transport type"),
-		OPT_LIST("traddr",         'a', &fabrics_cfg.traddr,          "transport address"),
-		OPT_LIST("trsvcid",        's', &fabrics_cfg.trsvcid,         "transport service id (e.g. IP port)"),
-		OPT_LIST("host-traddr",    'w', &fabrics_cfg.host_traddr,     "host traddr (e.g. FC WWN's)"),
-		OPT_LIST("hostnqn",        'q', &fabrics_cfg.hostnqn,         "user-defined hostnqn (if default not used)"),
-		OPT_LIST("hostid",         'I', &fabrics_cfg.hostid,          "user-defined hostid (if default not used)"),
-		OPT_LIST("raw",            'r', &fabrics_cfg.raw,             "raw output file"),
-		OPT_LIST("device",         'd', &fabrics_cfg.device,          "use existing discovery controller device"),
-		OPT_INT("keep-alive-tmo",  'k', &fabrics_cfg.keep_alive_tmo,  "keep alive timeout period in seconds"),
-		OPT_INT("reconnect-delay", 'c', &fabrics_cfg.reconnect_delay, "reconnect timeout period in seconds"),
-		OPT_INT("ctrl-loss-tmo",   'l', &fabrics_cfg.ctrl_loss_tmo,   "controller loss timeout period in seconds"),
-		OPT_INT("tos",             'T', &fabrics_cfg.tos,             "type of service"),
-		OPT_FLAG("hdr_digest",     'g', &fabrics_cfg.hdr_digest,      "enable transport protocol header digest (TCP transport)"),
-		OPT_FLAG("data_digest",    'G', &fabrics_cfg.data_digest,     "enable transport protocol data digest (TCP transport)"),
-		OPT_INT("nr-io-queues",    'i', &fabrics_cfg.nr_io_queues,    "number of io queues to use (default is core count)"),
-		OPT_INT("nr-write-queues", 'W', &fabrics_cfg.nr_write_queues, "number of write queues to use (default 0)"),
-		OPT_INT("nr-poll-queues",  'P', &fabrics_cfg.nr_poll_queues,  "number of poll queues to use (default 0)"),
-		OPT_INT("queue-size",      'Q', &fabrics_cfg.queue_size,      "number of io queue elements to use (default 128)"),
-		OPT_FLAG("persistent",     'p', &fabrics_cfg.persistent,      "persistent discovery connection"),
-		OPT_FLAG("quiet",          'S', &quiet,               "suppress already connected errors"),
-		OPT_FLAG("matching",       'm', &fabrics_cfg.matching_only,   "connect only records matching the traddr"),
-		OPT_END()
-	};
 
 	fabrics_cfg.tos = -1;
-	ret = argconfig_parse(argc, argv, desc, opts);
+	ret = argconfig_parse(argc, argv, desc, discover_opts);
 	if (ret)
 		goto out;
 
-	if (quiet)
+	if (fabrics_cfg.quiet)
 		log_level = LOG_WARNING;
 
 	if (fabrics_cfg.device && !strcmp(fabrics_cfg.device, "none"))
@@ -1455,7 +1455,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 	fabrics_cfg.nqn = NVME_DISC_SUBSYS_NAME;
 
 	if (!fabrics_cfg.transport && !fabrics_cfg.traddr) {
-		ret = discover_from_conf_file(desc, argstr, opts, connect);
+		ret = discover_from_conf_file(desc, argstr, connect);
 	} else {
 		if (fabrics_cfg.persistent && !fabrics_cfg.keep_alive_tmo)
 			fabrics_cfg.keep_alive_tmo = NVMF_DEF_DISC_TMO;

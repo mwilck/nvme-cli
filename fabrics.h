@@ -38,6 +38,7 @@ struct fabrics_config {
 	int  data_digest;
 	bool persistent;
 	bool matching_only;
+	bool quiet;
 };
 extern struct fabrics_config fabrics_cfg;
 
@@ -51,5 +52,6 @@ int do_discover(char *argstr, bool connect);
 int ctrl_instance(const char *device);
 char *parse_conn_arg(char *conargs, const char delim, const char *field);
 int remove_ctrl(int instance);
+int discover_from_conf_file(const char *desc, char *argstr, bool connect);
 
 #endif
