@@ -38,16 +38,21 @@ struct fabrics_config {
 	int  data_digest;
 	bool persistent;
 	bool matching_only;
+	bool quiet;
 	char *output_format;
 };
 extern struct fabrics_config fabrics_cfg;
 
 #define BUF_SIZE 4096
+#define PATH_NVMF_CFG_DIR	"/etc/nvme"
+#define FILE_NVMF_DISC		"discovery.conf"
+#define PATH_NVMF_DISC		PATH_NVMF_CFG_DIR "/" FILE_NVMF_DISC
 
 int build_options(char *argstr, int max_len, bool discover);
 int do_discover(char *argstr, bool connect, enum nvme_print_flags flags);
 int ctrl_instance(const char *device);
 char *parse_conn_arg(char *conargs, const char delim, const char *field);
 int remove_ctrl(int instance);
+int discover_from_conf_file(const char *desc, char *argstr, bool connect);
 
 #endif
