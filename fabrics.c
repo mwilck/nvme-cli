@@ -81,7 +81,6 @@ struct connect_args {
 struct connect_args *tracked_ctrls;
 
 #define PATH_NVME_FABRICS	"/dev/nvme-fabrics"
-#define PATH_NVMF_DISC		"/etc/nvme/discovery.conf"
 #define PATH_NVMF_HOSTNQN	"/etc/nvme/hostnqn"
 #define PATH_NVMF_HOSTID	"/etc/nvme/hostid"
 #define MAX_DISC_ARGS		10

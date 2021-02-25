@@ -42,6 +42,9 @@ struct fabrics_config {
 extern struct fabrics_config fabrics_cfg;
 
 #define BUF_SIZE 4096
+#define PATH_NVMF_CFG_DIR	"/etc/nvme"
+#define FILE_NVMF_DISC		"discovery.conf"
+#define PATH_NVMF_DISC		PATH_NVMF_CFG_DIR "/" FILE_NVMF_DISC
 
 int build_options(char *argstr, int max_len, bool discover);
 int do_discover(char *argstr, bool connect);
