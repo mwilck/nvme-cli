@@ -91,6 +91,8 @@ int event_remove(struct event *evt)
 
 int event_finished(struct event *evt)
 {
+	if (!evt->dsp)
+		return -EINVAL;
 	timeout_cancel(evt->dsp->timeout_event, evt);
 	return event_remove(evt);
 }
