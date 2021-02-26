@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <libudev.h>
 #include <signal.h>
 #include <time.h>
@@ -28,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/epoll.h>
+#include <sys/inotify.h>
 
 #include "nvme-status.h"
 #include "nvme.h"
@@ -429,6 +431,14 @@ static void monitor_handle_uevents(struct event *ev,
 	}
 }
 
+static struct {
+	bool running;
+	bool pending;
+	pid_t pid;
+} discovery_conf_task;
+
+static int monitor_discover_from_conf_file(void);
+
 static int handle_epoll_err(int errcode)
 {
 	if (errcode != -EINTR)
@@ -468,6 +478,15 @@ static int handle_epoll_err(int errcode)
 				    (long)pid, strerror(WEXITSTATUS(wstatus)));
 			else
 				msg(LOG_DEBUG, "child %ld exited normally\n", (long)pid);
+			if (discovery_conf_task.running &&
+			    discovery_conf_task.pid == pid) {
+				discovery_conf_task.running = false;
+				if (discovery_conf_task.pending) {
+					msg(LOG_NOTICE,
+					    "discovery from conf file pending - restarting\n");
+					monitor_discover_from_conf_file();
+				}
+			}
 			continue;
 		}
 
@@ -566,6 +585,13 @@ static int monitor_discover_from_conf_file(void)
 	pid_t pid;
 	int rc;
 
+	if (discovery_conf_task.running) {
+		msg(LOG_NOTICE, "discovery from conf file already running (%ld)\n",
+		    (long)discovery_conf_task.pid);
+		discovery_conf_task.pending = true;
+		return 0;
+	}
+
 	pid = fork();
 	if (pid == -1) {
 		msg(LOG_ERR, "failed to fork discovery task: %m");
@@ -573,6 +599,9 @@ static int monitor_discover_from_conf_file(void)
 	} else if (pid > 0) {
 		msg(LOG_DEBUG, "started discovery task %ld from conf file\n",
 		    (long)pid);
+		discovery_conf_task.pending = false;
+		discovery_conf_task.running = true;
+		discovery_conf_task.pid = pid;
 		return 0;
 	}
 
@@ -596,6 +625,54 @@ static void discovery_from_conf_file_cb(struct event *ev __attribute__((unused))
 					unsigned int __attribute__((unused)) ep_events)
 {
 	monitor_discover_from_conf_file();
+}
+
+static void handle_inotify_event(struct inotify_event *iev)
+{
+	if ((iev->mask & (IN_CLOSE_WRITE|IN_MOVED_TO)) == 0) {
+		msg(LOG_DEBUG, "ignoring event mask 0x%"PRIx32"\n", iev->mask);
+		return;
+	}
+
+	if (!iev->name || strcmp(iev->name, FILE_NVMF_DISC)) {
+		msg(LOG_DEBUG, "ignoring event mask 0x%"PRIx32" for %s\n",
+		    iev->mask, iev->name ? iev->name : "(null)");
+		return;
+	}
+
+	monitor_discover_from_conf_file();
+}
+
+static void inotify_cb(struct event *ev, unsigned int ep_events)
+{
+	char buf[sizeof(struct inotify_event) + NAME_MAX + 1];
+	int rc;
+
+	if (ev->reason != REASON_EVENT_OCCURED || (ep_events & EPOLLIN) == 0)
+		return;
+
+	while (true) {
+		struct inotify_event *iev;
+
+		rc = read(ev->fd, buf, sizeof(buf));
+		if (rc == -1) {
+			if (errno != EAGAIN)
+				msg(LOG_ERR, "error reading from inotify fd: %m\n");
+			return;
+		}
+
+		iev = (struct inotify_event *)buf;
+		if (iev->mask & (IN_DELETE_SELF|IN_MOVE_SELF)) {
+			if (inotify_rm_watch(ev->fd, iev->wd) == -1)
+				msg(LOG_ERR, "failed to remove watch %d: %m\n",
+				    iev->wd);
+			msg(LOG_WARNING, "inotify watch %d removed\n", iev->wd);
+			event_finished(ev);
+			close(ev->fd);
+			return;
+		}
+		handle_inotify_event(iev);
+	}
 }
 
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
@@ -670,6 +747,12 @@ int aen_monitor(const char *desc, int argc, char **argv)
 		.tmo = { .tv_sec = 0, .tv_nsec = 1000 },
 	};
 
+	struct event inotify_ev = {
+		.ep.events = EPOLLIN,
+		.ep.data.ptr = &inotify_ev,
+		.callback = inotify_cb,
+	};
+
 	sigset_t wait_mask;
 
 	ret = monitor_parse_opts(desc, argc, argv);
@@ -708,10 +791,31 @@ int aen_monitor(const char *desc, int argc, char **argv)
 			    strerror(-ret));
 	}
 
+	inotify_ev.fd = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+	if (inotify_ev.fd == -1)
+		msg(LOG_ERR, "failed to init inotify: %m\n");
+	else {
+		ret = inotify_add_watch(inotify_ev.fd, PATH_NVMF_CFG_DIR,
+					IN_CLOSE_WRITE|IN_MOVED_TO|
+					IN_DELETE_SELF|IN_MOVE_SELF);
+		if (ret == -1)
+			msg(LOG_ERR, "failed to add inotify watch for %s: %m\n",
+			    PATH_NVMF_CFG_DIR);
+		else if ((ret = event_add(dsp, &inotify_ev)) < 0)
+			msg(LOG_ERR, "failed to add inotify event: %s\n",
+			    strerror(-ret));
+		if (ret < 0) {
+			close(inotify_ev.fd);
+			inotify_ev.fd = -1;
+		}
+	}
+
 	conndb_init_from_sysfs();
 	ret = event_loop(dsp, &wait_mask, handle_epoll_err);
 
 	event_finished(&udev_event.e);
+	event_finished(&inotify_ev);
+	close(inotify_ev.fd);
 
 	conndb_for_each(monitor_kill_discovery_task, NULL);
 	if (mon_cfg.autoconnect && !mon_cfg.keep_ctrls)
