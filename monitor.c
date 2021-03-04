@@ -159,20 +159,26 @@ static ssize_t monitor_child_message(char *buf, size_t size, size_t len)
 	struct sockaddr_un clt_addr = { .sun_family = AF_UNIX, };
 	ssize_t rc;
 
-	snprintf(&clt_addr.sun_path[1], sizeof(clt_addr.sun_path) - 1,
-		 "%s.%ld", &monitor_sa.sun_path[1], (long)getpid());
-
 	fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 	if (fd == -1) {
 		msg(LOG_ERR, "failed to create socket: %m\n");
 		return -errno;
 	}
 
-	if (sendto(fd, buf, len, 0,
-		   (struct sockaddr *)&monitor_sa, sizeof(monitor_sa)) == -1) {
+	snprintf(&clt_addr.sun_path[1], sizeof(clt_addr.sun_path) - 1,
+		 "%s.%ld", &monitor_sa.sun_path[1], (long)getpid());
+
+	if ((rc = bind(fd, (struct sockaddr *)&clt_addr, sizeof(clt_addr))) == -1) {
+		msg(LOG_ERR, "failed in bind(): %m\n");
+		return -errno;
+	}
+
+	if ((rc = sendto(fd, buf, len, 0,
+			 (struct sockaddr *)&monitor_sa, sizeof(monitor_sa))) == -1) {
 		msg(LOG_ERR, "failed to send client message: %m\n");
 		return -errno;
 	}
+	msg(LOG_DEBUG, "sent %zd bytes to server\n", rc);
 
 	if ((rc = recv(fd, buf, size, MSG_TRUNC)) == -1) {
 		msg(LOG_ERR, "failed to receive response: %m\n");
@@ -281,12 +287,17 @@ static void notify_new_discovery(const char *argstr, int instance)
 	size_t len = 0;
 	ssize_t rc;
 
-	if ((rc = monitor_msg_hdr(buf, len, MON_MSG_NEW)) < 0)
+	if ((rc = monitor_msg_hdr(buf, sizeof(buf), MON_MSG_NEW)) < 0) {
+		msg(LOG_ERR, "failed to create msghdr: %s\n", strerror(-rc));
 		return;
+	}
+	len += rc;
 
-	if ((rc = safe_snprintf(buf + rc, sizeof(buf), "%d %s",
-				instance, argstr)) < 0)
+	if ((rc = safe_snprintf(buf + len, sizeof(buf) - len, "%d %s",
+				instance, argstr)) < 0) {
+		msg(LOG_ERR, "failed to create msg: %s\n", strerror(-rc));
 		return;
+	}
 	len += rc;
 
 	if ((rc = monitor_child_message(buf, sizeof(buf), len)) < 0)
