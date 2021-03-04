@@ -204,13 +204,14 @@ enum {
 };
 
 static const char *const monitor_opcode[] = {
-	[MON_MSG_ACK] = "ack ",
-	[MON_MSG_ERR] = "err ",
-	[MON_MSG_NEW] = "new ",
+	[MON_MSG_ACK] = "ACK ",
+	[MON_MSG_ERR] = "ERR ",
+	[MON_MSG_NEW] = "NEW ",
 };
 
 static int monitor_msg_hdr(char *buf, size_t len, int opcode)
 {
+	memset(buf, 0, len);
 	return safe_snprintf(buf, len, "%s%s",
 			     monitor_magic, monitor_opcode[opcode]);
 }
@@ -238,6 +239,17 @@ static int monitor_check_hdr(const char *buf, size_t len, int *opcode)
 	return 0;
 }
 
+static int monitor_ack_msg(char *buf, size_t len)
+{
+	return monitor_msg_hdr(buf, len, MON_MSG_ACK);
+}
+
+static __attribute__((unused))
+int monitor_err_msg(char *buf, size_t len)
+{
+	return monitor_msg_hdr(buf, len, MON_MSG_ERR);
+}
+
 static int monitor_check_resp(const char *buf, size_t len, int req_opcode)
 {
 	int resp_opcode, rc;
@@ -245,18 +257,22 @@ static int monitor_check_resp(const char *buf, size_t len, int req_opcode)
 	if ((rc = monitor_check_hdr(buf, len, &resp_opcode)) < 0)
 		return rc;
 
+	rc = -EINVAL;
 	switch (req_opcode) {
 	case MON_MSG_NEW:
 		if (resp_opcode == MON_MSG_ACK)
-			return 0;
+			rc = 0;
 		break;
 	default:
 		break;
 	}
 
-	msg(LOG_ERR, "bad response: %s => %s\n",
-	    monitor_opcode[req_opcode], monitor_opcode[resp_opcode]);
-	return -EINVAL;
+	if (rc != 0)
+		msg(LOG_ERR, "bad response: %s => %s\n",
+		    monitor_opcode[req_opcode], monitor_opcode[resp_opcode]);
+	else
+		msg(LOG_INFO, "response: %s\n", buf);
+	return rc;
 }
 
 static void notify_new_discovery(const char *argstr, int instance)
@@ -855,11 +871,19 @@ struct comm_event {
 	int msglen;
 };
 
-static void handle_child_msg(struct comm_event *comm, int msglen)
+static int handle_child_msg(struct comm_event *comm, int msglen)
 {
+	int rc;
+
 	msg(LOG_INFO, "got message from %s: %s\n",
 	    &comm->addr.sun_path[1], comm->message);
-	comm->msglen = snprintf(comm->message, sizeof(comm->message), "moin");
+
+	if ((rc = monitor_ack_msg(comm->message, sizeof(comm->message))) < 0) {
+		msg(LOG_ERR, "failed to create response\n");
+		return rc;
+	}
+	comm->msglen = rc;
+	return 0;
 }
 
 static int parent_comm_cb(struct event *evt, uint32_t events)
@@ -895,7 +919,9 @@ static int parent_comm_cb(struct event *evt, uint32_t events)
 			    rc - sizeof(comm->message));
 			return EVENTCB_CONTINUE;
 		}
-		handle_child_msg(comm, rc);
+		if (handle_child_msg(comm, rc) < 0)
+			return EVENTCB_CONTINUE;
+
 		evt->ep.events = EPOLLOUT|EPOLLHUP;
 	}
 
