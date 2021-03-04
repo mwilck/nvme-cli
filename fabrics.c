@@ -1368,16 +1368,16 @@ int do_discover(char *argstr, bool connect, enum nvme_print_flags flags,
 	}
 	if (instance < 0)
 		return instance;
+	else if (notify && (fabrics_cfg.device || fabrics_cfg.persistent))
+		notify(argstr, instance);
 
 	if (asprintf(&dev_name, "/dev/nvme%d", instance) < 0)
 		return -errno;
 	ret = nvmf_get_log_page_discovery(dev_name, &log, &numrec, &status);
 	free(dev_name);
-	if (fabrics_cfg.persistent) {
+	if (fabrics_cfg.persistent)
 		msg(LOG_NOTICE, "Persistent device: nvme%d\n", instance);
-		if (notify)
-			notify(argstr, instance);
-	}
+
 	if (!fabrics_cfg.device && !fabrics_cfg.persistent) {
 		err = remove_ctrl(instance);
 		if (err)
