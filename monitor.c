@@ -180,6 +180,7 @@ static ssize_t monitor_child_message(char *buf, size_t size, size_t len)
 	}
 	msg(LOG_DEBUG, "sent %zd bytes to server\n", rc);
 
+	memset(buf, 0, size);
 	if ((rc = recv(fd, buf, size, MSG_TRUNC)) == -1) {
 		msg(LOG_ERR, "failed to receive response: %m\n");
 		return -errno;
@@ -242,7 +243,8 @@ static int monitor_check_hdr(const char *buf, size_t len, int *opcode)
 	}
 
 	*opcode = i;
-	return 0;
+	/* header length */
+	return 8;
 }
 
 static int monitor_ack_msg(char *buf, size_t len)
