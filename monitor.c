@@ -678,7 +678,6 @@ static int inotify_cb(struct event *ev, unsigned int ep_events)
 }
 
 static DEFINE_CLEANUP_FUNC(cleanup_event, struct event *, free);
-static DEFINE_CLEANUP_FUNC(cleanup_fd, int, close);
 
 static void add_inotify_event(struct dispatcher *dsp)
 {
