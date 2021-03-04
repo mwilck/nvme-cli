@@ -279,7 +279,7 @@ static int monitor_check_resp(const char *buf, size_t len, int req_opcode)
 		msg(LOG_ERR, "bad response: %s => %s\n",
 		    monitor_opcode[req_opcode], monitor_opcode[resp_opcode]);
 	else
-		msg(LOG_INFO, "response: %s\n", buf);
+		msg(LOG_DEBUG, "response: %s\n", buf);
 	return rc;
 }
 
@@ -317,13 +317,47 @@ struct comm_event {
 
 static int handle_child_msg(struct comm_event *comm, int msglen)
 {
-	int rc;
+	int rc, instance, n;
+	int opcode = MON_MSG_ERR;
+	char *buf =  comm->message;
+	struct nvme_connection *co = NULL;
 
-	msg(LOG_INFO, "got message from %s: %s\n",
-	    &comm->addr.sun_path[1], comm->message);
+	msg(LOG_DEBUG, "got message from %s: %s\n",
+	    &comm->addr.sun_path[1], buf);
+
+	if ((rc = monitor_check_hdr(buf, sizeof(comm->message), &opcode)) < 0)
+		goto err_response;
+	buf += rc;
+
+	if (opcode != MON_MSG_NEW) {
+		msg(LOG_ERR, "unexpected message: %s\n", monitor_opcode[opcode]);
+		goto err_response;
+	}
+
+	if (sscanf(buf, "%d %n", &instance, &n) != 1) {
+		msg(LOG_ERR, "no instance number found\n");
+		goto err_response;
+	}
+	buf += n;
+
+	rc = conndb_add_disc_ctrl(buf, &co);
+	if (rc == 0 || rc == -EEXIST) {
+		co->discovery_instance = instance;
+		msg(LOG_INFO, "discovery instance set to %d\n", instance);
+	} else
+		msg(LOG_ERR, "failed to add connecton: %s\n", strerror(-rc));
 
 	if ((rc = monitor_ack_msg(comm->message, sizeof(comm->message))) < 0) {
 		msg(LOG_ERR, "failed to create response\n");
+		return rc;
+	}
+	comm->msglen = rc;
+	return 0;
+
+err_response:
+	msg(LOG_ERR, "received bad message from client\n");
+	if ((rc = monitor_err_msg(comm->message, sizeof(comm->message))) < 0) {
+		msg(LOG_ERR, "failed to create error response\n");
 		return rc;
 	}
 	comm->msglen = rc;
