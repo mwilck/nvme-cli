@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <libudev.h>
 #include <signal.h>
@@ -30,6 +31,8 @@
 #include <sys/wait.h>
 #include <sys/epoll.h>
 #include <sys/inotify.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include "nvme-status.h"
 #include "nvme.h"
@@ -42,6 +45,12 @@
 #define LOG_FUNCNAME 1
 #include "util/log.h"
 #include "event/event.h"
+
+#define MSG_SIZE 1024
+static const struct sockaddr_un monitor_sa = {
+	.sun_family = AF_UNIX,
+	.sun_path = "\0nvme-monitor",
+};
 
 static struct monitor_config {
 	bool autoconnect;
@@ -712,6 +721,125 @@ static void add_inotify_event(struct dispatcher *dsp)
 	inotify_event = NULL;
 }
 
+struct comm_event {
+	struct event e;
+	struct sockaddr_un addr;
+	char message[MSG_SIZE];
+	int msglen;
+};
+
+static void handle_child_msg(char *message, size_t size, int *len)
+{
+	*len = snprintf(message, size, "moin");
+}
+
+static int parent_comm_cb(struct event *evt, uint32_t events)
+{
+	struct comm_event *comm = container_of(evt, struct comm_event, e);
+	int rc;
+
+	if (events & EPOLLHUP) {
+		msg(LOG_WARNING, "socket disconnect\n");
+		return EVENTCB_CLEANUP;
+
+	} else if (events & EPOLLOUT) {
+		rc = sendto(evt->fd, comm->message, comm->msglen, 0,
+			    (struct sockaddr *)&comm->addr, sizeof(comm->addr));
+		if (rc == -1) {
+			msg(LOG_ERR, "sendto: %m\n");
+			return EVENTCB_CLEANUP;
+		}
+		evt->ep.events = EPOLLIN|EPOLLHUP;
+
+	} else if (events & EPOLLIN) {
+		socklen_t len;
+
+		memset(&comm->addr, 0, sizeof(comm->addr));
+		len = sizeof(comm->addr);
+		rc = recvfrom(evt->fd, comm->message, sizeof(comm->message),
+			      MSG_TRUNC, (struct sockaddr*)&comm->addr, &len);
+		if (rc <= 0) {
+			msg(LOG_ERR, "error receiving child message: %m\n");
+			return EVENTCB_CONTINUE;
+		} else if (rc > sizeof(comm->message)) {
+			msg(LOG_ERR, "child message truncated: %zd bytes missing\n",
+			    rc - sizeof(comm->message));
+			return EVENTCB_CONTINUE;
+		}
+		comm->msglen = rc;
+		handle_child_msg(comm->message, sizeof(comm->message), &comm->msglen);
+		evt->ep.events = EPOLLOUT|EPOLLHUP;
+	}
+
+	if ((rc = event_modify(evt)) < 0) {
+		msg(LOG_ERR, "event_modify: %s\n", strerror(-rc));
+		return EVENTCB_CLEANUP;
+	}
+
+	return EVENTCB_CONTINUE;
+}
+
+static int set_socketflags(int fd)
+{
+	int flags;
+
+	if ((flags = fcntl(fd, F_GETFL, 0)) == -1) {
+		msg(LOG_ERR, "F_GETFL failed: %m\n");
+		return -errno;
+	}
+	if (fcntl(fd, F_SETFL, flags|O_NONBLOCK) == -1) {
+		msg(LOG_ERR, "F_SETFL failed: %m\n");
+		return -errno;
+	}
+	if ((flags = fcntl(fd, F_GETFD, 0)) == -1) {
+		msg(LOG_ERR, "F_GETFD failed: %m\n");
+		return -errno;
+	}
+	if (fcntl(fd, F_SETFD, flags|FD_CLOEXEC) == -1) {
+		msg(LOG_ERR, "F_SETFD failed: %m\n");
+		return -errno;
+	}
+	return 0;
+}
+
+static DEFINE_CLEANUP_FUNC(cleanup_comm, struct comm_event *, free);
+
+static void add_parent_comm_event(struct dispatcher *dsp)
+{
+	struct comm_event *comm __cleanup__(cleanup_comm) = NULL;
+	int fd __cleanup__(cleanup_fd) = -1;
+	int rc;
+
+	fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (fd == -1) {
+		msg(LOG_ERR, "failed to create socket: %m\n");
+		return;
+	}
+
+	if ((rc = set_socketflags(fd)) < 0)
+		return;
+
+	if (bind(fd, (struct sockaddr *)&monitor_sa,
+		 sizeof(monitor_sa)) == -1) {
+		msg(LOG_ERR, "bind() failed: %m\n");
+		return;
+	}
+
+	comm = calloc(1, sizeof(*comm));
+	if (!comm)
+		return;
+
+	comm->e = EVENT_ON_HEAP(parent_comm_cb, fd, EPOLLIN);
+
+	if ((rc = event_add(dsp, &comm->e)) < 0) {
+		msg(LOG_ERR, "failed to add child communication event: %s\n",
+		    strerror(-rc));
+		return;
+	}
+	fd = -1;
+	comm = NULL;
+}
+
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
 {
 	bool quiet = false;
@@ -819,6 +947,7 @@ int aen_monitor(const char *desc, int argc, char **argv)
 	}
 
 	add_inotify_event(dsp);
+	add_parent_comm_event(dsp);
 	conndb_init_from_sysfs();
 
 	ret = event_loop(dsp, &wait_mask, handle_epoll_err);
