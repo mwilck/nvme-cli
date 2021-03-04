@@ -1227,7 +1227,7 @@ retry:
 		flags = validate_output_format(fabrics_cfg.output_format);
 		if (flags < 0)
 			flags = NORMAL;
-		ret = do_discover(argstr, true, flags);
+		ret = do_discover(argstr, true, flags, NULL);
 	} else
 		ret = add_ctrl(argstr);
 	if (ret == -EINVAL && e->treq & NVMF_TREQ_DISABLE_SQFLOW) {
@@ -1328,7 +1328,8 @@ static void nvmf_get_host_identifiers(int ctrl_instance)
 
 static DEFINE_CLEANUP_FUNC(cleanup_log, struct nvmf_disc_rsp_page_hdr *, free);
 
-int do_discover(char *argstr, bool connect, enum nvme_print_flags flags)
+int do_discover(char *argstr, bool connect, enum nvme_print_flags flags,
+		disc_notify_cb notify)
 {
 	struct nvmf_disc_rsp_page_hdr *log __cleanup__(cleanup_log) = NULL;
 	char *dev_name;
@@ -1367,6 +1368,8 @@ int do_discover(char *argstr, bool connect, enum nvme_print_flags flags)
 	}
 	if (instance < 0)
 		return instance;
+	else if (notify && (fabrics_cfg.device || fabrics_cfg.persistent))
+		notify(argstr, instance);
 
 	if (asprintf(&dev_name, "/dev/nvme%d", instance) < 0)
 		return -errno;
@@ -1374,6 +1377,7 @@ int do_discover(char *argstr, bool connect, enum nvme_print_flags flags)
 	free(dev_name);
 	if (fabrics_cfg.persistent)
 		msg(LOG_NOTICE, "Persistent device: nvme%d\n", instance);
+
 	if (!fabrics_cfg.device && !fabrics_cfg.persistent) {
 		err = remove_ctrl(instance);
 		if (err)
@@ -1423,7 +1427,8 @@ int do_discover(char *argstr, bool connect, enum nvme_print_flags flags)
 
 static OPT_ARGS(discover_opts);
 
-int discover_from_conf_file(const char *desc, char *argstr, bool connect)
+int discover_from_conf_file(const char *desc, char *argstr, bool connect,
+			    disc_notify_cb notify)
 {
 	FILE *f;
 	char line[256], *ptr, *all_args, *args, **argv;
@@ -1487,7 +1492,7 @@ int discover_from_conf_file(const char *desc, char *argstr, bool connect)
 			goto free_and_continue;
 		}
 
-		err = do_discover(argstr, connect, flags);
+		err = do_discover(argstr, connect, flags, notify);
 		if (err)
 			ret = err;
 
@@ -1551,7 +1556,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 	fabrics_cfg.nqn = NVME_DISC_SUBSYS_NAME;
 
 	if (!fabrics_cfg.transport && !fabrics_cfg.traddr) {
-		ret = discover_from_conf_file(desc, argstr, connect);
+		ret = discover_from_conf_file(desc, argstr, connect, NULL);
 	} else {
 		set_discovery_kato(&fabrics_cfg);
 
@@ -1568,7 +1573,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 		if (ret)
 			goto out;
 
-		ret = do_discover(argstr, connect, flags);
+		ret = do_discover(argstr, connect, flags, NULL);
 	}
 
 out:
