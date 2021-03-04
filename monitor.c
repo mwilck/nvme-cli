@@ -1025,6 +1025,7 @@ static int monitor_parse_opts(const char *desc, int argc, char **argv)
 		OPT_END()
 	};
 
+	log_pid = true;
 	ret = argconfig_parse(argc, argv, desc, opts);
 	if (ret)
 		return ret;
