@@ -677,6 +677,42 @@ static int inotify_cb(struct event *ev, unsigned int ep_events)
 	return EVENTCB_CONTINUE;
 }
 
+static DEFINE_CLEANUP_FUNC(cleanup_event, struct event *, free);
+static DEFINE_CLEANUP_FUNC(cleanup_fd, int, close);
+
+static void add_inotify_event(struct dispatcher *dsp)
+{
+	struct event *inotify_event __cleanup__(cleanup_event) = NULL;
+	int fd __cleanup__(cleanup_fd) = -1;
+	int rc;
+
+	inotify_event = calloc(1, sizeof *inotify_event);
+	if (!inotify_event)
+		return;
+
+	fd = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+	if (fd == -1) {
+		msg(LOG_ERR, "failed to init inotify: %m\n");
+		return;
+	}
+
+	*inotify_event = EVENT_ON_HEAP(inotify_cb, fd, EPOLLIN);
+	rc = inotify_add_watch(inotify_event->fd, PATH_NVMF_CFG_DIR,
+			       IN_CLOSE_WRITE|IN_MOVED_TO|
+			       IN_DELETE_SELF|IN_MOVE_SELF);
+	if (rc == -1)
+		msg(LOG_ERR, "failed to add inotify watch for %s: %m\n",
+		    PATH_NVMF_CFG_DIR);
+
+	if ((rc = event_add(dsp, inotify_event)) < 0) {
+		msg(LOG_ERR, "failed to add inotify event: %s\n",
+		    strerror(-rc));
+		return;
+	}
+	fd = -1;
+	inotify_event = NULL;
+}
+
 static int monitor_parse_opts(const char *desc, int argc, char **argv)
 {
 	bool quiet = false;
@@ -736,7 +772,6 @@ int aen_monitor(const char *desc, int argc, char **argv)
 	struct udev_monitor *monitor __cleanup__(cleanup_monitorp) = NULL;
 	struct udev_monitor_event udev_event = { .e.fd = -1, };
 	struct event startup_discovery_event = { .fd = -1, };
-	struct event inotify_event = { .fd = -1, };
 	sigset_t wait_mask;
 
 	ret = monitor_parse_opts(desc, argc, argv);
@@ -784,28 +819,9 @@ int aen_monitor(const char *desc, int argc, char **argv)
 		goto out;
 	}
 
-	inotify_event = EVENT_ON_STACK(inotify_cb,
-				       inotify_init1(IN_NONBLOCK|IN_CLOEXEC),
-				       EPOLLIN);
-	if (inotify_event.fd == -1)
-		msg(LOG_ERR, "failed to init inotify: %m\n");
-	else {
-		ret = inotify_add_watch(inotify_event.fd, PATH_NVMF_CFG_DIR,
-					IN_CLOSE_WRITE|IN_MOVED_TO|
-					IN_DELETE_SELF|IN_MOVE_SELF);
-		if (ret == -1)
-			msg(LOG_ERR, "failed to add inotify watch for %s: %m\n",
-			    PATH_NVMF_CFG_DIR);
-		else if ((ret = event_add(dsp, &inotify_event)) < 0)
-			msg(LOG_ERR, "failed to add inotify event: %s\n",
-			    strerror(-ret));
-		if (ret < 0) {
-			close(inotify_event.fd);
-			inotify_event.fd = -1;
-		}
-	}
-
+	add_inotify_event(dsp);
 	conndb_init_from_sysfs();
+
 	ret = event_loop(dsp, &wait_mask, handle_epoll_err);
 
 	conndb_for_each(monitor_kill_discovery_task, NULL);
