@@ -728,10 +728,10 @@ static int handle_epoll_err(int errcode)
 		return errcode;
 	else if (must_exit) {
 		msg(LOG_NOTICE, "monitor: exit signal received\n");
-		return 0;
+		return ELOOP_QUIT;
 	} else if (!got_sigchld) {
 		msg(LOG_WARNING, "monitor: unexpected interruption, ignoring\n");
-		return 1;
+		return ELOOP_CONTINUE;
 	}
 
 	got_sigchld = 0;
@@ -799,7 +799,7 @@ static int handle_epoll_err(int errcode)
 
 out:
 	/* tell event_loop() to continue */
-	return 1;
+	return ELOOP_CONTINUE;
 }
 
 static int monitor_kill_discovery_task(struct nvme_connection *co,
