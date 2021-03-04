@@ -52,6 +52,18 @@ int conndb_add(const char *transport, const char *traddr,
 	       struct nvme_connection **new_conn);
 
 /**
+ * conndb_add_disc_ctrl - add connection from kernel parameters
+ *
+ * @addrstr: kernel connect parameters as passed to /dev/nvme-fabrics
+ * @new_conn: see conndb_add()
+ *
+ * Extracts connection parameters from @addrstr and calls conndb_add().
+ *
+ * Return: see conndb_add().
+ */
+int conndb_add_disc_ctrl(const char *addrstr, struct nvme_connection **new_conn);
+
+/**
  * conndb_find() - lookup a connection with given parameters
  *
  * Return: NULL if not found, valid connection object otherwise.

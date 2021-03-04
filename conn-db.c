@@ -194,6 +194,26 @@ int conndb_add(const char *transport, const char *traddr,
 	return rc;
 }
 
+int conndb_add_disc_ctrl(const char *addrstr, struct nvme_connection **new_conn)
+{
+	char *subsysnqn __cleanup__(cleanup_charp) = NULL;
+	char *transport __cleanup__(cleanup_charp) = NULL;
+	char *traddr __cleanup__(cleanup_charp) = NULL;
+	char *trsvcid __cleanup__(cleanup_charp) = NULL;
+	char *host_traddr __cleanup__(cleanup_charp) = NULL;
+
+	subsysnqn = parse_conn_arg(addrstr, ',', "nqn");
+	if (strcmp(subsysnqn, NVME_DISC_SUBSYS_NAME)) {
+		msg(LOG_WARNING, "%s is not a discovery subsystem\n", subsysnqn);
+		return -EINVAL;
+	}
+	transport = parse_conn_arg(addrstr, ',', "transport");
+	traddr = parse_conn_arg(addrstr, ',', "traddr");
+	trsvcid = parse_conn_arg(addrstr, ',', "trsvcid");
+	host_traddr = parse_conn_arg(addrstr, ',', "host_traddr");
+	return conndb_add(transport, traddr, trsvcid, host_traddr, new_conn);
+}
+
 struct nvme_connection *conndb_find(const char *transport, const char *traddr,
 				    const char *trsvcid, const char *host_traddr)
 {
