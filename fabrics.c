@@ -1227,7 +1227,7 @@ retry:
 		flags = validate_output_format(fabrics_cfg.output_format);
 		if (flags < 0)
 			flags = NORMAL;
-		ret = do_discover(argstr, true, flags);
+		ret = do_discover(argstr, true, flags, NULL);
 	} else
 		ret = add_ctrl(argstr);
 	if (ret == -EINVAL && e->treq & NVMF_TREQ_DISABLE_SQFLOW) {
@@ -1328,7 +1328,8 @@ static void nvmf_get_host_identifiers(int ctrl_instance)
 
 static DEFINE_CLEANUP_FUNC(cleanup_log, struct nvmf_disc_rsp_page_hdr *, free);
 
-int do_discover(char *argstr, bool connect, enum nvme_print_flags flags)
+int do_discover(char *argstr, bool connect, enum nvme_print_flags flags,
+		disc_notify_cb notify)
 {
 	struct nvmf_disc_rsp_page_hdr *log __cleanup__(cleanup_log) = NULL;
 	char *dev_name;
@@ -1487,7 +1488,7 @@ int discover_from_conf_file(const char *desc, char *argstr, bool connect)
 			goto free_and_continue;
 		}
 
-		err = do_discover(argstr, connect, flags);
+		err = do_discover(argstr, connect, flags, NULL);
 		if (err)
 			ret = err;
 
@@ -1568,7 +1569,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 		if (ret)
 			goto out;
 
-		ret = do_discover(argstr, connect, flags);
+		ret = do_discover(argstr, connect, flags, NULL);
 	}
 
 out:

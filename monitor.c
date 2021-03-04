@@ -302,7 +302,7 @@ static int monitor_discovery(const char *transport, const char *traddr,
 
 	rc = build_options(argstr, sizeof(argstr), true);
 	msg(LOG_DEBUG, "%s\n", argstr);
-	rc = do_discover(argstr, mon_cfg.autoconnect, NORMAL);
+	rc = do_discover(argstr, mon_cfg.autoconnect, NORMAL, NULL);
 
 	free(device);
 	exit(-rc);
