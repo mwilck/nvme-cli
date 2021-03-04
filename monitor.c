@@ -855,9 +855,11 @@ struct comm_event {
 	int msglen;
 };
 
-static void handle_child_msg(char *message, size_t size, int *len)
+static void handle_child_msg(struct comm_event *comm, int msglen)
 {
-	*len = snprintf(message, size, "moin");
+	msg(LOG_INFO, "got message from %s: %s\n",
+	    &comm->addr.sun_path[1], comm->message);
+	comm->msglen = snprintf(comm->message, sizeof(comm->message), "moin");
 }
 
 static int parent_comm_cb(struct event *evt, uint32_t events)
@@ -893,8 +895,7 @@ static int parent_comm_cb(struct event *evt, uint32_t events)
 			    rc - sizeof(comm->message));
 			return EVENTCB_CONTINUE;
 		}
-		comm->msglen = rc;
-		handle_child_msg(comm->message, sizeof(comm->message), &comm->msglen);
+		handle_child_msg(comm, rc);
 		evt->ep.events = EPOLLOUT|EPOLLHUP;
 	}
 
