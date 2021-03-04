@@ -315,28 +315,14 @@ struct comm_event {
 	int msglen;
 };
 
-static int handle_child_msg(struct comm_event *comm, int msglen)
+static int handle_child_msg_new(const char *buf, size_t size)
 {
 	int rc, instance, n;
-	int opcode = MON_MSG_ERR;
-	char *buf =  comm->message;
 	struct nvme_connection *co = NULL;
-
-	msg(LOG_DEBUG, "got message from %s: %s\n",
-	    &comm->addr.sun_path[1], buf);
-
-	if ((rc = monitor_check_hdr(buf, sizeof(comm->message), &opcode)) < 0)
-		goto err_response;
-	buf += rc;
-
-	if (opcode != MON_MSG_NEW) {
-		msg(LOG_ERR, "unexpected message: %s\n", monitor_opcode[opcode]);
-		goto err_response;
-	}
 
 	if (sscanf(buf, "%d %n", &instance, &n) != 1) {
 		msg(LOG_ERR, "no instance number found\n");
-		goto err_response;
+		return MON_MSG_ERR;
 	}
 	buf += n;
 
@@ -347,21 +333,49 @@ static int handle_child_msg(struct comm_event *comm, int msglen)
 	} else
 		msg(LOG_ERR, "failed to add connecton: %s\n", strerror(-rc));
 
-	if ((rc = monitor_ack_msg(comm->message, sizeof(comm->message))) < 0) {
-		msg(LOG_ERR, "failed to create response\n");
-		return rc;
-	}
-	comm->msglen = rc;
-	return 0;
+	return MON_MSG_ACK;
+}
 
-err_response:
-	msg(LOG_ERR, "received bad message from client\n");
-	if ((rc = monitor_err_msg(comm->message, sizeof(comm->message))) < 0) {
-		msg(LOG_ERR, "failed to create error response\n");
-		return rc;
+static int handle_child_msg(struct comm_event *comm, int msglen)
+{
+	int rc;
+	int opcode = MON_MSG_ERR;
+	char *buf =  comm->message;
+
+	msg(LOG_DEBUG, "got message from %s: %s\n",
+	    &comm->addr.sun_path[1], buf);
+
+	if ((rc = monitor_check_hdr(buf, sizeof(comm->message), &opcode)) < 0) {
+		rc = MON_MSG_ERR;
+		goto response;
 	}
-	comm->msglen = rc;
-	return 0;
+	buf += rc;
+
+	switch (opcode) {
+	case MON_MSG_NEW:
+		rc = handle_child_msg_new(buf, sizeof(comm->message) - rc);
+		break;
+	case MON_MSG_ACK:
+	case MON_MSG_ERR:
+		msg(LOG_ERR, "unexpected message: %s\n", monitor_opcode[opcode]);
+		rc = MON_MSG_ERR;
+		break;
+	default:
+		msg(LOG_ERR, "bogus message\n");
+		break;
+	}
+
+response:
+	if (rc == MON_MSG_ACK)
+		rc = monitor_ack_msg(comm->message, sizeof(comm->message));
+	else
+		rc = monitor_err_msg(comm->message, sizeof(comm->message));
+
+	if (rc < 0)
+		msg(LOG_ERR, "failed to create response\n");
+	else
+		comm->msglen = rc;
+	return rc;
 }
 
 static int parent_comm_cb(struct event *evt, uint32_t events)
