@@ -54,7 +54,7 @@ int build_options(char *argstr, int max_len, bool discover);
 int do_discover(char *argstr, bool connect, enum nvme_print_flags flags,
 		disc_notify_cb notify);
 int ctrl_instance(const char *device);
-char *parse_conn_arg(char *conargs, const char delim, const char *field);
+char *parse_conn_arg(const char *conargs, const char delim, const char *field);
 int remove_ctrl(int instance);
 int discover_from_conf_file(const char *desc, char *argstr, bool connect);
 

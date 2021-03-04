@@ -206,7 +206,7 @@ static const char *cms_str(__u8 cm)
  * If field found, return string containing field value. If field
  * not found, return an empty string.
  */
-char *parse_conn_arg(char *conargs, const char delim, const char *field)
+char *parse_conn_arg(const char *conargs, const char delim, const char *field)
 {
 	char *s, *e;
 	size_t cnt;
