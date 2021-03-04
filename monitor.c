@@ -152,6 +152,133 @@ static int child_reset_signals(void)
 	return -err;
 }
 
+
+static ssize_t monitor_child_message(char *buf, size_t size, size_t len)
+{
+	int fd __cleanup__(cleanup_fd) = -1;
+	struct sockaddr_un clt_addr = { .sun_family = AF_UNIX, };
+	ssize_t rc;
+
+	snprintf(&clt_addr.sun_path[1], sizeof(clt_addr.sun_path) - 1,
+		 "%s.%ld", &monitor_sa.sun_path[1], (long)getpid());
+
+	fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if (fd == -1) {
+		msg(LOG_ERR, "failed to create socket: %m\n");
+		return -errno;
+	}
+
+	if (sendto(fd, buf, len, 0,
+		   (struct sockaddr *)&monitor_sa, sizeof(monitor_sa)) == -1) {
+		msg(LOG_ERR, "failed to send client message: %m\n");
+		return -errno;
+	}
+
+	if ((rc = recv(fd, buf, size, MSG_TRUNC)) == -1) {
+		msg(LOG_ERR, "failed to receive response: %m\n");
+		return -errno;
+	} else if (rc > size) {
+		msg(LOG_ERR, "response truncated: %zu bytes missing\n",
+		    rc - size);
+		return -EOVERFLOW;
+	}
+
+	return rc;
+}
+
+#define safe_snprintf(var, size, format, args...)			\
+({									\
+	size_t __size = size;						\
+	int __ret;							\
+									\
+	__ret = snprintf(var, __size, format, ##args);			\
+	__ret < 0 || (size_t)__ret < __size ? __ret : -EOVERFLOW;	\
+})
+
+static const char monitor_magic[] = "NVMM";
+enum {
+	MON_MSG_ACK = 0,
+	MON_MSG_ERR,
+	MON_MSG_NEW,
+	__MAX_MON_MSG__,
+};
+
+static const char *const monitor_opcode[] = {
+	[MON_MSG_ACK] = "ack ",
+	[MON_MSG_ERR] = "err ",
+	[MON_MSG_NEW] = "new ",
+};
+
+static int monitor_msg_hdr(char *buf, size_t len, int opcode)
+{
+	return safe_snprintf(buf, len, "%s%s",
+			     monitor_magic, monitor_opcode[opcode]);
+}
+
+static int monitor_check_hdr(const char *buf, size_t len, int *opcode)
+{
+	int i;
+
+	if (memcmp(buf, monitor_magic, 4) != 0) {
+		msg(LOG_ERR, "bad magic\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(monitor_opcode); i ++) {
+		if (memcmp(buf + 4, monitor_opcode[i], 4) == 0)
+			break;
+	}
+
+	if (i == ARRAY_SIZE(monitor_opcode)) {
+		msg(LOG_ERR, "invalid opcode\n");
+		return -EINVAL;
+	}
+
+	*opcode = i;
+	return 0;
+}
+
+static int monitor_check_resp(const char *buf, size_t len, int req_opcode)
+{
+	int resp_opcode, rc;
+
+	if ((rc = monitor_check_hdr(buf, len, &resp_opcode)) < 0)
+		return rc;
+
+	switch (req_opcode) {
+	case MON_MSG_NEW:
+		if (resp_opcode == MON_MSG_ACK)
+			return 0;
+		break;
+	default:
+		break;
+	}
+
+	msg(LOG_ERR, "bad response: %s => %s\n",
+	    monitor_opcode[req_opcode], monitor_opcode[resp_opcode]);
+	return -EINVAL;
+}
+
+static void notify_new_discovery(const char *argstr, int instance)
+{
+	char buf[MSG_SIZE];
+	size_t len = 0;
+	ssize_t rc;
+
+	if ((rc = monitor_msg_hdr(buf, len, MON_MSG_NEW)) < 0)
+		return;
+
+	if ((rc = safe_snprintf(buf + rc, sizeof(buf), "%d %s",
+				instance, argstr)) < 0)
+		return;
+	len += rc;
+
+	if ((rc = monitor_child_message(buf, sizeof(buf), len)) < 0)
+		return;
+
+	monitor_check_resp(buf, rc, MON_MSG_NEW);
+}
+
 static void monitor_handle_nvme_add(struct udev_device *ud)
 {
 	const char *syspath = udev_device_get_syspath(ud);
@@ -302,7 +429,7 @@ static int monitor_discovery(const char *transport, const char *traddr,
 
 	rc = build_options(argstr, sizeof(argstr), true);
 	msg(LOG_DEBUG, "%s\n", argstr);
-	rc = do_discover(argstr, mon_cfg.autoconnect, NORMAL, NULL);
+	rc = do_discover(argstr, mon_cfg.autoconnect, NORMAL, notify_new_discovery);
 
 	free(device);
 	exit(-rc);
