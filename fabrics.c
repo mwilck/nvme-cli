@@ -1428,7 +1428,7 @@ int do_discover(char *argstr, bool connect, enum nvme_print_flags flags,
 static OPT_ARGS(discover_opts);
 
 int discover_from_conf_file(const char *desc, char *argstr, bool connect,
-			    disc_notify_cb notify)
+			    disc_query_dev_cb query_dev, disc_notify_cb notify)
 {
 	FILE *f;
 	char line[256], *ptr, *all_args, *args, **argv;
@@ -1491,6 +1491,9 @@ int discover_from_conf_file(const char *desc, char *argstr, bool connect,
 			ret = err;
 			goto free_and_continue;
 		}
+
+		if (query_dev)
+			query_dev(argstr, &fabrics_cfg.device);
 
 		err = do_discover(argstr, connect, flags, notify);
 		if (err)
@@ -1556,7 +1559,7 @@ int fabrics_discover(const char *desc, int argc, char **argv, bool connect)
 	fabrics_cfg.nqn = NVME_DISC_SUBSYS_NAME;
 
 	if (!fabrics_cfg.transport && !fabrics_cfg.traddr) {
-		ret = discover_from_conf_file(desc, argstr, connect, NULL);
+		ret = discover_from_conf_file(desc, argstr, connect, NULL, NULL);
 	} else {
 		set_discovery_kato(&fabrics_cfg);
 
