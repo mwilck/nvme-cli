@@ -297,12 +297,14 @@ static int ctrl_instance(char *device)
  * given.
  * Return true/false based on whether it matches
  */
-static bool ctrl_matches_connectargs(char *name, struct connect_args *args)
+static bool ctrl_matches_connectargs(char *name, struct connect_args *args,
+				     bool assume_persistent)
 {
 	struct connect_args cargs;
 	bool found = false;
 	char *path, *addr;
 	int ret;
+	bool persistent = true;
 
 	ret = asprintf(&path, "%s/%s", SYS_NVME, name);
 	if (ret < 0)
@@ -331,17 +333,21 @@ static bool ctrl_matches_connectargs(char *name, struct connect_args *args)
 		 * underneath us as they are owned by another program.
 		 *
 		 * The 'kato' attribute might not be present; assume a
-		 * non-persistent controller for these installations.
+		 * non-persistent controller for these installations,
+		 * unless assume_persistent is set.
 		 */
 		if (kato_str) {
 			kato = strtoul(kato_str, &p, 0);
 			if (p == kato_str)
 				kato = 0;
-		}
-		if (kato == 0)
-			return found;
+			free(kato_str);
+			persistent = (kato != 0);
+		} else if (!assume_persistent)
+			persistent = false;
 	}
-	if (!strcmp(cargs.subsysnqn, args->subsysnqn) &&
+
+	if (persistent &&
+	    !strcmp(cargs.subsysnqn, args->subsysnqn) &&
 	    !strcmp(cargs.transport, args->transport) &&
 	    (!strcmp(cargs.traddr, args->traddr) ||
 	     !strcmp(args->traddr, "none")) &&
@@ -380,7 +386,7 @@ static char *find_ctrl_with_connectargs(struct connect_args *args)
 	}
 
 	for (i = 0; i < n; i++) {
-		if (ctrl_matches_connectargs(devices[i]->d_name, args)) {
+		if (ctrl_matches_connectargs(devices[i]->d_name, args, false)) {
 			devname = strdup(devices[i]->d_name);
 			if (devname == NULL)
 				fprintf(stderr, "no memory for ctrl name %s\n",
@@ -1372,7 +1378,7 @@ static int do_discover(char *argstr, bool connect, enum nvme_print_flags flags)
 	if (!cargs)
 		return -ENOMEM;
 
-	if (!cfg.device || !ctrl_matches_connectargs(cfg.device, cargs))
+	if (!cfg.device || !ctrl_matches_connectargs(cfg.device, cargs, true))
 		cfg.device = find_ctrl_with_connectargs(cargs);
 	free_connect_args(cargs);
 
