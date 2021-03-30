@@ -1,0 +1,111 @@
+variables:
+  DOCKER_IO: "docker.io"
+  MINIVENT_IMG: "fill-in-your-image-here"
+  IMG_32BIT: "i386/alpine"
+
+default:
+  image: $MINIVENT_IMG
+  tags:
+    - docker
+
+build:cov:
+  stage: build
+  script:
+    - make COV=1 test
+  artifacts:
+    paths:
+      - libminivent.so
+      - test/*-test
+      - test/*-mock
+      - ./*.gcno
+
+build:opt:
+  stage: build
+  script:
+    - make test
+  artifacts:
+    paths:
+      - libminivent.so
+      - test/*-test
+      - test/*-mock
+
+coverage:
+  stage: test
+  dependencies:
+    - build:cov
+  script:
+    - export LD_LIBRARY_PATH=$PWD
+    - ./test/ts-test
+    - ./test/tv-test
+    - ./test/mini-test
+    - ./test/array-mock
+    - ./test/event-test -n 10 -t 10 -q
+    - ./test/event-test -n 1 -t 10 -s -q
+    - ./test/echo-test -n 2 -t 10
+    - ./test/dgram-test -n 2 -t 10
+    - gcovr -r .
+  coverage: '/^TOTAL.*\s+(\d+\%)$/'
+
+valgrind:
+  stage: test
+  dependencies:
+    - build:opt
+  script:
+    - export LD_LIBRARY_PATH=$PWD
+    - valgrind --leak-check=full ./test/ts-test
+    - valgrind --leak-check=full ./test/tv-test
+    - valgrind --leak-check=full ./test/array-mock
+    - valgrind --leak-check=full ./test/event-test -n 50 -t 10 -q
+    - valgrind --leak-check=full ./test/echo-test -n 2 -t 10
+    - valgrind --leak-check=full ./test/dgram-test -n 2 -t 10
+
+tough:
+  stage: test
+  dependencies:
+    - build:opt
+  variables:
+    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "false"
+  script:
+    - export LD_LIBRARY_PATH=$PWD
+    - ./test/event-test -n 100 -t 60 -m 1000 -a 400 -q
+    - ./test/echo-test -n 100 -t 60
+    - ./test/echo-test -n 1 -t 10 -w 0
+    - ./test/echo-test -n 2 -t 10 -w 0
+    - ./test/echo-test -n 4 -t 10 -w 0
+    - ./test/echo-test -n 8 -t 10 -w 0
+    - ./test/dgram-test -n 100 -t 60
+    - ./test/dgram-test -n 1 -t 10 -w 0
+    - ./test/dgram-test -n 2 -t 10 -w 0
+    - ./test/dgram-test -n 4 -t 10 -w 0
+    - ./test/dgram-test -n 8 -t 10 -w 0
+  retry: 1
+
+
+build:alpine32:
+  stage: build
+  image: $DOCKER_IO/$IMG_32BIT
+  script:
+    - apk add make gcc musl-dev cmocka-dev avahi-dev
+    - make test
+  artifacts:
+    paths:
+      - libminivent.so
+      - test/*-test
+      - test/*-mock
+
+test:alpine32:
+  stage: test
+  image: $DOCKER_IO/$IMG_32BIT
+  dependencies:
+    - build:alpine32
+  script:
+    - apk add cmocka strace
+    - export LD_LIBRARY_PATH=$PWD
+    - ./test/ts-test
+    - ./test/tv-test
+    - ./test/mini-test
+    - ./test/array-mock
+    - ./test/event-test -n 10 -t 10 -q
+    - ./test/event-test -n 1 -t 10 -s -q
+    - ./test/echo-test -n 10 -t 10
+    - ./test/dgram-test -n 10 -t 10
