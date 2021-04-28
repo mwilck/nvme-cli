@@ -1,0 +1,17 @@
+*~
+\#*
+.#*
+*.o
+*.d
+cscope.files
+cscope.out
+libminivent.a
+libminivent.so
+perf.data*
+*.gcno
+*.gcda
+*.gcov
+test/*.o.wrap
+test/*-mock
+test/*-test
+test/*.out
