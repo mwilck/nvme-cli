@@ -13,6 +13,8 @@ jobs:
     steps:
     - name: checkout
       uses: actions/checkout@v2
+      with:
+        submodules: true
     - name: update ppc64el arch
       run: |
         sudo dpkg --add-architecture ppc64el
